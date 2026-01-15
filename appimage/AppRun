@@ -1,0 +1,19 @@
+#!/bin/bash
+# AppRun script for RickAndMortyViewer AppImage
+
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+
+# Set up library paths
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="${HERE}/usr/plugins"
+export QML2_IMPORT_PATH="${HERE}/usr/qml"
+
+# Use bundled fonts via fontconfig
+export FONTCONFIG_FILE="${HERE}/usr/lib/fonts/fonts.conf"
+
+# Default to X11 (xcb) if no platform specified
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+
+# Run the application
+exec "${HERE}/usr/bin/RickAndMortyViewer" "$@"

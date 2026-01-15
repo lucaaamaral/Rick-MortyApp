@@ -1,0 +1,57 @@
+Rick and Morty Viewer
+=====================
+
+This application uses Qt 6 which is licensed under the GNU Lesser General
+Public License (LGPL) version 3.
+
+LGPL Compliance
+---------------
+
+This AppImage contains Qt shared libraries that you can replace with your
+own modified versions. To do so:
+
+1. Extract the AppImage:
+   ./RickAndMortyViewer-*.AppImage --appimage-extract
+
+2. Replace the Qt libraries in squashfs-root/usr/lib/
+
+3. Run the extracted version:
+   ./squashfs-root/AppRun
+
+Qt Source Code
+--------------
+
+The Qt source code used in this application can be obtained from:
+https://code.qt.io/qt/qt5.git (tag: v6.6.2)
+
+Alternatively, you can download it from:
+https://download.qt.io/official_releases/qt/6.6/6.6.2/
+
+Submodules used:
+- qtbase
+- qtdeclarative
+- qtshadertools
+- qtsvg
+- qtwayland
+
+Build Configuration
+-------------------
+
+Qt was configured with:
+  -shared -fontconfig -system-freetype -opensource
+
+Third-Party Licenses
+--------------------
+
+- Qt: LGPL v3 (https://www.qt.io/licensing/)
+- libcurl: MIT/X derivate license (statically linked)
+- glog: BSD 3-Clause (statically linked)
+- nlohmann/json: MIT (header-only)
+- Roboto font: Apache License 2.0
+- Noto Color Emoji: SIL Open Font License 1.1
+
+Rick and Morty API
+------------------
+
+This application uses the Rick and Morty API (https://rickandmortyapi.com/)
+which is free and open to use.

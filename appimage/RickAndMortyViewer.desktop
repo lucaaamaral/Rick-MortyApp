@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rick and Morty Viewer
+Comment=Browse Rick and Morty episodes and characters
+Exec=RickAndMortyViewer
+Icon=RickAndMortyViewer
+Categories=Utility;Qt;
+Terminal=false
+StartupWMClass=RickAndMortyViewer

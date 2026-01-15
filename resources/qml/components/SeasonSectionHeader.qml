@@ -41,8 +41,8 @@ Rectangle {
 
         // Season badge
         Rectangle {
-            Layout.preferredWidth: 48
-            Layout.preferredHeight: 24
+            Layout.preferredWidth: 56
+            Layout.preferredHeight: 28
             radius: Theme.radiusSmall
             color: Theme.dimensionPurple
 
@@ -50,9 +50,8 @@ Rectangle {
                 anchors.centerIn: parent
                 text: "S" + (root.seasonNumber < 10 ? "0" : "") + root.seasonNumber
                 color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeMedium
-                font.bold: true
-                font.family: "monospace"
+                font.family: Theme.fontDisplay
+                font.pixelSize: Theme.fontSizeLarge
             }
         }
 
@@ -60,8 +59,8 @@ Rectangle {
         Text {
             text: "Season " + root.seasonNumber
             color: Theme.textPrimary
-            font.pixelSize: Theme.sectionFontSize
-            font.bold: true
+            font.family: Theme.fontTitle
+            font.pixelSize: Theme.fontSizeTitle
         }
 
         Item { Layout.fillWidth: true }

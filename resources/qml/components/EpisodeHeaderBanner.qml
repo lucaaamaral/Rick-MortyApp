@@ -180,8 +180,8 @@ Rectangle {
 
         // Episode code badge
         Rectangle {
-            Layout.preferredWidth: Theme.isCompact ? 60 : 80
-            Layout.preferredHeight: Theme.isCompact ? 32 : 40
+            Layout.preferredWidth: Theme.isCompact ? 70 : 90
+            Layout.preferredHeight: Theme.isCompact ? 36 : 46
             radius: Theme.radiusSmall
             color: Theme.spacePurple
             border.width: 2
@@ -191,9 +191,8 @@ Rectangle {
                 anchors.centerIn: parent
                 text: root.episodeCode
                 color: Theme.portalGreen
-                font.pixelSize: Theme.isCompact ? 14 : 18
-                font.bold: true
-                font.family: "monospace"
+                font.family: Theme.fontDisplay
+                font.pixelSize: Theme.isCompact ? 18 : 24
             }
         }
 
@@ -202,8 +201,8 @@ Rectangle {
             Layout.fillWidth: true
             text: root.episodeName
             color: Theme.textPrimary
-            font.pixelSize: Theme.bannerTitleSize
-            font.bold: true
+            font.family: Theme.fontTitle
+            font.pixelSize: Theme.isCompact ? Theme.bannerTitleSize + 4 : Theme.bannerTitleSize + 6
             elide: Text.ElideRight
         }
     }

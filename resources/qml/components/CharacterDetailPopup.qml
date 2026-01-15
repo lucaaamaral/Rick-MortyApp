@@ -153,8 +153,8 @@ Item {
                             anchors.centerIn: parent
                             text: root.characterName.charAt(0).toUpperCase()
                             color: Theme.portalGreen
+                            font.family: Theme.fontTitle
                             font.pixelSize: Theme.fontSizeHeader
-                            font.bold: true
                         }
                     }
 
@@ -180,7 +180,8 @@ Item {
                 Layout.fillWidth: true
                 text: root.characterName
                 color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeTitle
+                font.family: Theme.fontBody
+                font.pixelSize: Theme.fontSizeHeader
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap

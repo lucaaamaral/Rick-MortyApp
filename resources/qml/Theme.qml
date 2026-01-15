@@ -43,6 +43,12 @@ QtObject {
     readonly property color textSecondary: "#B0B0B0"
     readonly property color textMuted: "#666666"
 
+    // Font families - Rick and Morty themed
+    readonly property string fontTitle: "Bangers"      // Comic book style for main titles
+    readonly property string fontDisplay: "Creepster"  // Horror style for episode codes
+    readonly property string fontBody: "Nunito"        // Rounded, readable body text
+    readonly property string fontBodyBold: "Nunito"    // Nunito bold for emphasis (use with font.bold: true)
+
     // Fonts - responsive scaling
     readonly property real fontScale: isCompact ? 0.9 : 1.0
     readonly property int fontSizeSmall: Math.round(12 * fontScale)

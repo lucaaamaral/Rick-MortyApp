@@ -119,8 +119,8 @@ Item {
                             anchors.centerIn: parent
                             text: root.name.charAt(0).toUpperCase()
                             color: Theme.portalGreen
+                            font.family: Theme.fontTitle
                             font.pixelSize: Theme.fontSizeTitle
-                            font.bold: true
                         }
                     }
 
@@ -165,7 +165,8 @@ Item {
                 Layout.fillWidth: true
                 text: root.name
                 color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeLarge
+                font.family: Theme.fontBody
+                font.pixelSize: Theme.fontSizeTitle
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight

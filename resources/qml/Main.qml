@@ -112,8 +112,8 @@ ApplicationWindow {
                 Text {
                     text: "Episodes"
                     color: Theme.textPrimary
+                    font.family: Theme.fontTitle
                     font.pixelSize: Theme.fontSizeHeader
-                    font.bold: true
                 }
 
                 Item { Layout.fillWidth: true }
@@ -270,8 +270,8 @@ ApplicationWindow {
                 Text {
                     text: "Characters"
                     color: Theme.textPrimary
+                    font.family: Theme.fontTitle
                     font.pixelSize: Theme.fontSizeHeader
-                    font.bold: true
                 }
 
                 // Selected episode indicator
@@ -290,8 +290,8 @@ ApplicationWindow {
                         anchors.centerIn: parent
                         text: backend.selectedEpisodeName
                         color: Theme.portalGreen
+                        font.family: Theme.fontDisplay
                         font.pixelSize: Theme.fontSizeSmall
-                        font.bold: true
                     }
                 }
 
@@ -420,8 +420,8 @@ ApplicationWindow {
                                     anchors.centerIn: parent
                                     text: backend.randomCharacter.name ? backend.randomCharacter.name.charAt(0).toUpperCase() : "?"
                                     color: Theme.portalGreen
+                                    font.family: Theme.fontTitle
                                     font.pixelSize: Theme.fontSizeHeader
-                                    font.bold: true
                                 }
                             }
 
@@ -455,7 +455,8 @@ ApplicationWindow {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: backend.randomCharacter.name || ""
                             color: Theme.textPrimary
-                            font.pixelSize: Theme.fontSizeLarge
+                            font.family: Theme.fontBody
+                            font.pixelSize: Theme.fontSizeTitle
                             font.bold: true
                         }
 
@@ -486,8 +487,8 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             text: "?"
                             color: Theme.portalGreen
+                            font.family: Theme.fontTitle
                             font.pixelSize: Theme.isCompact ? 36 : 48
-                            font.bold: true
                             opacity: 0.6
                         }
 

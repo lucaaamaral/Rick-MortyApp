@@ -1,0 +1,14 @@
+# Build directory
+build/
+
+# IDE
+.vscode/
+.idea/
+*.user
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

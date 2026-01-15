@@ -1,0 +1,9 @@
+module RickAndMorty
+
+singleton Theme 1.0 Theme.qml
+
+EpisodeDelegate 1.0 components/EpisodeDelegate.qml
+CharacterCard 1.0 components/CharacterCard.qml
+PortalSpinner 1.0 components/PortalSpinner.qml
+StarField 1.0 components/StarField.qml
+HamburgerButton 1.0 components/HamburgerButton.qml

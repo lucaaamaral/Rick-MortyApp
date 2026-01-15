@@ -1,0 +1,16 @@
+<RCC>
+    <qresource prefix="/">
+        <file>qml/Main.qml</file>
+        <file>qml/Theme.qml</file>
+        <file>qml/qmldir</file>
+        <file>qml/components/PortalSpinner.qml</file>
+        <file>qml/components/StarField.qml</file>
+        <file>qml/components/EpisodeDelegate.qml</file>
+        <file>qml/components/CharacterCard.qml</file>
+        <file>qml/components/HamburgerButton.qml</file>
+        <file>qml/components/CharacterDetailPopup.qml</file>
+        <file>qml/components/SeasonSectionHeader.qml</file>
+        <file>qml/components/EpisodeHeaderBanner.qml</file>
+        <file>shaders/circlemask.frag.qsb</file>
+    </qresource>
+</RCC>

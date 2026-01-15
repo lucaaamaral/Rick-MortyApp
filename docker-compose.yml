@@ -1,0 +1,118 @@
+services:
+  # Build dependencies (Qt + curl + glog + fonts) for AMD64
+  deps-amd64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/amd64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-x86_64 -DTARGET_PLATFORM=linux-x86_64 &&
+        cmake --build .build/linux-x86_64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+      "
+
+  # Build dependencies (Qt + curl + glog + fonts) for ARM64
+  deps-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/arm64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-arm64 -DTARGET_PLATFORM=linux-arm64 &&
+        cmake --build .build/linux-arm64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+      "
+
+  # Build application for AMD64
+  app-amd64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/amd64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-x86_64 -DTARGET_PLATFORM=linux-x86_64 &&
+        cmake --build .build/linux-x86_64 --target rick_and_morty_viewer -j$(nproc)
+      "
+
+  # Build application for ARM64
+  app-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/arm64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-arm64 -DTARGET_PLATFORM=linux-arm64 &&
+        cmake --build .build/linux-arm64 --target rick_and_morty_viewer -j$(nproc)
+      "
+
+  # Create distribution for AMD64
+  distribute-amd64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/amd64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake --build .build/linux-x86_64 --target distribute
+      "
+
+  # Create distribution for ARM64
+  distribute-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/arm64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake --build .build/linux-arm64 --target distribute
+      "
+
+  # Create AppImage for AMD64
+  appimage-amd64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/amd64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    privileged: true  # Needed for FUSE/AppImage
+    command: >
+      bash -c "
+        cmake --build .build/linux-x86_64 --target appimage
+      "
+
+  # Create AppImage for ARM64
+  appimage-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/arm64
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    privileged: true  # Needed for FUSE/AppImage
+    command: >
+      bash -c "
+        cmake --build .build/linux-arm64 --target appimage
+      "

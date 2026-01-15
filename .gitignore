@@ -1,5 +1,16 @@
-# Build directory
-build/
+# Build directories
+.build/
+
+# Prebuilt dependencies (Qt, curl, glog, fonts)
+.lib-prebuilt/
+
+# Distribution bundles
+distribute/
+.distribute/
+
+# AppImage working directories
+squashfs-root/
+*.AppImage
 
 # IDE
 .vscode/

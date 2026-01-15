@@ -1,0 +1,10 @@
+@echo off
+setlocal
+
+set "DIR=%~dp0"
+set "PATH=%DIR%lib;%DIR%plugins;%PATH%"
+set "QT_PLUGIN_PATH=%DIR%plugins"
+set "QML2_IMPORT_PATH=%DIR%qml"
+set "QT_QPA_FONTDIR=%DIR%fonts"
+
+"%DIR%RickAndMortyViewer.exe" %*

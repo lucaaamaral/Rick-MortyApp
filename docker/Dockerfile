@@ -17,6 +17,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     file \
+    xz-utils \
+    # Linux cross-compilers (bidirectional arm64 <-> x86_64)
+    gcc-x86-64-linux-gnu \
+    g++-x86-64-linux-gnu \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    # Windows x86_64 cross-compiler (MinGW)
+    mingw-w64 \
     # Qt6 dependencies - X11/XCB
     libxcb1-dev \
     libxcb-cursor-dev \
@@ -82,6 +90,18 @@ RUN ARCH=$(uname -m) && \
     curl -L -o /usr/local/bin/linuxdeploy-plugin-qt \
     "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${ARCH}.AppImage" && \
     chmod +x /usr/local/bin/linuxdeploy-plugin-qt
+
+# Install LLVM-MinGW for Windows ARM64 cross-compilation
+# Downloads the correct version based on host architecture
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then LLVM_ARCH="x86_64"; else LLVM_ARCH="aarch64"; fi && \
+    curl -L -o /tmp/llvm-mingw.tar.xz \
+    "https://github.com/mstorsjo/llvm-mingw/releases/download/20251216/llvm-mingw-20251216-ucrt-ubuntu-22.04-${LLVM_ARCH}.tar.xz" && \
+    tar -xf /tmp/llvm-mingw.tar.xz -C /opt && \
+    ln -s /opt/llvm-mingw-20251216-ucrt-ubuntu-22.04-* /opt/llvm-mingw && \
+    rm /tmp/llvm-mingw.tar.xz
+
+ENV PATH="/opt/llvm-mingw/bin:${PATH}"
 
 WORKDIR /build
 

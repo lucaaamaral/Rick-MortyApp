@@ -94,8 +94,32 @@ set(QT_GENERATOR "Unix Makefiles")
 if(TARGET_OS STREQUAL "linux")
     set(LIB_EXTENSION "so")
     set(EXE_EXTENSION "")
-    # Let Qt auto-detect available platform backends (xcb, wayland, linuxfb, etc.)
-    set(QT_PLATFORM_ARGS "")
+    # Native build: use system libraries
+    # Cross-compile: use bundled libraries (no sysroot available)
+    if(IS_CROSS_COMPILE)
+        set(QT_PLATFORM_ARGS
+            -no-fontconfig
+            -no-opengl
+            -no-feature-brotli
+            -no-feature-mtdev
+            -no-feature-tslib
+            -no-feature-libinput
+            -no-feature-evdev
+            -no-feature-linuxfb
+            -no-feature-vnc
+            -qt-freetype
+            -qt-pcre
+            -qt-libpng
+            -qt-libjpeg
+            -qt-zlib
+            -qt-harfbuzz
+        )
+    else()
+        # Native build: Let Qt auto-detect available platform backends
+        set(QT_PLATFORM_ARGS
+            -fontconfig
+        )
+    endif()
 elseif(TARGET_OS STREQUAL "windows")
     set(QT_PLATFORM_ARGS
         -platform win32-g++
@@ -107,25 +131,21 @@ endif()
 
 # Cross-compilation setup
 if(IS_CROSS_COMPILE)
-    if(TARGET_PLATFORM STREQUAL "linux-arm64")
-        set(CROSS_COMPILE_PREFIX "aarch64-linux-gnu-")
-        set(QT_XPLATFORM "linux-aarch64-gnu-g++")
-    elseif(TARGET_PLATFORM STREQUAL "linux-x86_64")
-        set(CROSS_COMPILE_PREFIX "x86_64-linux-gnu-")
-        set(QT_XPLATFORM "linux-g++-64")
-    elseif(TARGET_PLATFORM STREQUAL "windows-x86_64")
-        set(CROSS_COMPILE_PREFIX "x86_64-w64-mingw32-")
-        set(QT_XPLATFORM "win32-g++")
-    elseif(TARGET_PLATFORM STREQUAL "windows-arm64")
-        set(CROSS_COMPILE_PREFIX "aarch64-w64-mingw32-")
-        set(QT_XPLATFORM "win32-g++")
-    endif()
-
-    # For cross-compiling Qt, we need a host Qt first
+    # For cross-compiling Qt, we need a host Qt first (for moc, rcc, qmlcachegen)
+    # Qt6 puts host tools in libexec/, not bin/
     set(HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/${HOST_PLATFORM}/qt6")
-    if(NOT EXISTS "${HOST_QT_DIR}/bin/moc")
-        message(WARNING "Cross-compiling requires host Qt. Build native ${HOST_PLATFORM} first.")
+    if(NOT EXISTS "${HOST_QT_DIR}/libexec/moc")
+        message(FATAL_ERROR
+            "Cross-compiling requires host Qt built first.\n"
+            "Build for ${HOST_PLATFORM} before building for ${TARGET_PLATFORM}:\n"
+            "  cmake -B .build/${HOST_PLATFORM} -DTARGET_PLATFORM=${HOST_PLATFORM}\n"
+            "  cmake --build .build/${HOST_PLATFORM} --target qt6_external"
+        )
     endif()
+    message(STATUS "Using host Qt from: ${HOST_QT_DIR}")
+
+    # Set toolchain file path
+    set(CROSS_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/cmake/toolchains/${TARGET_PLATFORM}.cmake")
 endif()
 
 #######################################
@@ -156,23 +176,26 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         -no-feature-printsupport
         -no-feature-cups
         -no-feature-concurrent
-        -fontconfig
         ${QT_PLATFORM_ARGS}
     )
 
     # Add cross-compile options if needed
-    if(IS_CROSS_COMPILE AND DEFINED QT_XPLATFORM)
-        list(APPEND QT_CONFIGURE_CMD
-            -xplatform ${QT_XPLATFORM}
-            -device-option CROSS_COMPILE=${CROSS_COMPILE_PREFIX}
-        )
-        if(EXISTS "${HOST_QT_DIR}/bin/moc")
-            list(APPEND QT_CONFIGURE_CMD -qt-host-path ${HOST_QT_DIR})
-        endif()
-    endif()
+    # Qt6 uses CMake internally - pass toolchain file via -- options
+    if(IS_CROSS_COMPILE)
+        # Host Qt path for moc, rcc, qmlcachegen
+        list(APPEND QT_CONFIGURE_CMD -qt-host-path ${HOST_QT_DIR})
 
-    # Add CMake generator
-    list(APPEND QT_CONFIGURE_CMD -- -G "${QT_GENERATOR}")
+        # Pass CMake options after --
+        list(APPEND QT_CONFIGURE_CMD
+            --
+            -G "${QT_GENERATOR}"
+            -DCMAKE_TOOLCHAIN_FILE=${CROSS_TOOLCHAIN_FILE}
+            -DCMAKE_C_COMPILER_WORKS=TRUE
+            -DCMAKE_CXX_COMPILER_WORKS=TRUE
+        )
+    else()
+        list(APPEND QT_CONFIGURE_CMD -- -G "${QT_GENERATOR}")
+    endif()
 
     ExternalProject_Add(qt6_external
         GIT_REPOSITORY https://code.qt.io/qt/qt5.git

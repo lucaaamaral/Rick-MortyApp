@@ -1,4 +1,66 @@
 services:
+  #######################################
+  # Clean services - remove build artifacts
+  #######################################
+
+  # Clean linux-x86_64 build (for rebuilding)
+  clean-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        rm -rf /workspace/.lib-prebuilt/linux-x86_64/qt6-build/* \
+               /workspace/.lib-prebuilt/linux-x86_64/qt6 \
+               /workspace/.lib-prebuilt/linux-x86_64/.qt-stamp \
+               /workspace/.lib-prebuilt/linux-x86_64/curl-build \
+               /workspace/.lib-prebuilt/linux-x86_64/curl \
+               /workspace/.lib-prebuilt/linux-x86_64/.curl-stamp \
+               /workspace/.lib-prebuilt/linux-x86_64/glog-build \
+               /workspace/.lib-prebuilt/linux-x86_64/glog \
+               /workspace/.lib-prebuilt/linux-x86_64/.glog-stamp \
+               /workspace/.build/linux-x86_64/CMakeCache.txt \
+               /workspace/.build/linux-x86_64/CMakeFiles 2>/dev/null;
+        echo 'Cleaned linux-x86_64 build'
+      "
+
+  # Clean windows-x86_64 build (for rebuilding)
+  clean-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        rm -rf /workspace/.lib-prebuilt/windows-x86_64 \
+               /workspace/.build/windows-x86_64 2>/dev/null;
+        echo 'Cleaned windows-x86_64 build'
+      "
+
+  # Clean windows-arm64 build (for rebuilding)
+  clean-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        rm -rf /workspace/.lib-prebuilt/windows-arm64 \
+               /workspace/.build/windows-arm64 2>/dev/null;
+        echo 'Cleaned windows-arm64 build'
+      "
+
+  #######################################
+  # Native build services
+  #######################################
+
   # Build dependencies (Qt + curl + glog + fonts) for AMD64
   deps-amd64:
     build:
@@ -115,4 +177,155 @@ services:
     command: >
       bash -c "
         cmake --build .build/linux-arm64 --target appimage
+      "
+
+  #######################################
+  # Cross-compilation services
+  # These run natively on the host and use cross-compilers
+  # Requires host Qt to be built first (deps-arm64 or deps-amd64)
+  #######################################
+
+  # Cross-compile dependencies for linux-x86_64 (from any host)
+  cross-deps-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-x86_64 -DTARGET_PLATFORM=linux-x86_64 &&
+        cmake --build .build/linux-x86_64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+      "
+
+  # Cross-compile app for linux-x86_64
+  cross-app-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-x86_64 -DTARGET_PLATFORM=linux-x86_64 &&
+        cmake --build .build/linux-x86_64 --target rick_and_morty_viewer -j$(nproc)
+      "
+
+  # Cross-compile distribution for linux-x86_64
+  cross-distribute-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake --build .build/linux-x86_64 --target distribute
+      "
+
+  # Cross-compile AppImage for linux-x86_64
+  cross-appimage-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    privileged: true
+    command: >
+      bash -c "
+        cmake --build .build/linux-x86_64 --target appimage
+      "
+
+  #######################################
+  # Windows x86_64 cross-compilation (MinGW)
+  #######################################
+
+  # Cross-compile dependencies for windows-x86_64
+  cross-deps-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64 &&
+        cmake --build .build/windows-x86_64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+      "
+
+  # Cross-compile app for windows-x86_64
+  cross-app-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64 &&
+        cmake --build .build/windows-x86_64 --target rick_and_morty_viewer -j$(nproc)
+      "
+
+  # Cross-compile distribution for windows-x86_64
+  cross-distribute-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake --build .build/windows-x86_64 --target distribute
+      "
+
+  #######################################
+  # Windows ARM64 cross-compilation (llvm-mingw)
+  #######################################
+
+  # Cross-compile dependencies for windows-arm64
+  cross-deps-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/windows-arm64 -DTARGET_PLATFORM=windows-arm64 &&
+        cmake --build .build/windows-arm64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+      "
+
+  # Cross-compile app for windows-arm64
+  cross-app-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/windows-arm64 -DTARGET_PLATFORM=windows-arm64 &&
+        cmake --build .build/windows-arm64 --target rick_and_morty_viewer -j$(nproc)
+      "
+
+  # Cross-compile distribution for windows-arm64
+  cross-distribute-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake --build .build/windows-arm64 --target distribute
       "

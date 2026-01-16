@@ -23,3 +23,5 @@ squashfs-root/
 # OS
 .DS_Store
 Thumbs.db
+
+.claude

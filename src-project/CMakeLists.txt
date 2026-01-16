@@ -35,9 +35,27 @@ set(JSON_Install OFF CACHE INTERNAL "")
 if(USE_PREBUILT_DEPS)
     message(STATUS "Using prebuilt dependencies from superbuild")
 
-    # Find prebuilt curl
-    find_package(CURL REQUIRED)
-    message(STATUS "Found CURL ${CURL_VERSION_STRING} at ${CURL_INCLUDE_DIRS}")
+    # For cross-compilation, curl's CMake config may fail to find OpenSSL
+    # Use manual library specification instead
+    if(DEFINED CURL_ROOT)
+        set(CURL_INCLUDE_DIRS "${CURL_ROOT}/include")
+        if(WIN32)
+            set(CURL_LIBRARIES "${CURL_ROOT}/lib/libcurl.a")
+        else()
+            set(CURL_LIBRARIES "${CURL_ROOT}/lib/libcurl.a")
+        endif()
+        message(STATUS "Using prebuilt CURL from ${CURL_ROOT}")
+
+        # Create imported target for compatibility
+        add_library(CURL::libcurl STATIC IMPORTED)
+        set_target_properties(CURL::libcurl PROPERTIES
+            IMPORTED_LOCATION "${CURL_LIBRARIES}"
+            INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIRS}"
+        )
+    else()
+        find_package(CURL REQUIRED)
+        message(STATUS "Found CURL ${CURL_VERSION_STRING} at ${CURL_INCLUDE_DIRS}")
+    endif()
 
     # Find prebuilt glog
     find_package(glog REQUIRED)
@@ -87,6 +105,9 @@ endif()
 add_library(core STATIC
     ${SRC_DIR}/core/Models.h
     ${SRC_DIR}/core/Observer.h
+    ${SRC_DIR}/core/IHttpClient.h
+    ${SRC_DIR}/core/CurlHttpClient.h
+    ${SRC_DIR}/core/CurlHttpClient.cpp
     ${SRC_DIR}/core/ApiClient.h
     ${SRC_DIR}/core/ApiClient.cpp
     ${SRC_DIR}/core/DataStore.h
@@ -100,9 +121,14 @@ if(USE_PREBUILT_DEPS)
         CURL::libcurl
         nlohmann_json::nlohmann_json
         glog::glog
-        ssl
-        crypto
     )
+    # Link static OpenSSL for Linux builds (Windows uses Schannel via curl)
+    if(NOT WIN32 AND DEFINED OPENSSL_ROOT)
+        target_link_libraries(core PUBLIC
+            ${OPENSSL_ROOT}/lib/libssl.a
+            ${OPENSSL_ROOT}/lib/libcrypto.a
+        )
+    endif()
 else()
     target_link_libraries(core PUBLIC
         CURL::libcurl

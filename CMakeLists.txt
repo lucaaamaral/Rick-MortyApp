@@ -36,19 +36,42 @@ string(REPLACE "-" ";" PLATFORM_PARTS ${TARGET_PLATFORM})
 list(GET PLATFORM_PARTS 0 TARGET_OS)
 list(GET PLATFORM_PARTS 1 TARGET_ARCH)
 
-# Determine native host platform
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-    set(HOST_PLATFORM "linux-arm64")
+# Determine native host platform (always use host, not target/toolchain)
+set(HOST_SYSTEM_NAME "${CMAKE_HOST_SYSTEM_NAME}")
+if(NOT HOST_SYSTEM_NAME)
+    set(HOST_SYSTEM_NAME "${CMAKE_SYSTEM_NAME}")
+endif()
+set(HOST_SYSTEM_PROCESSOR "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+if(NOT HOST_SYSTEM_PROCESSOR OR HOST_SYSTEM_PROCESSOR STREQUAL "unknown")
+    set(HOST_SYSTEM_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+if(NOT HOST_SYSTEM_PROCESSOR OR HOST_SYSTEM_PROCESSOR STREQUAL "unknown")
+    if(HOST_SYSTEM_NAME STREQUAL "Linux")
+        execute_process(
+            COMMAND uname -m
+            OUTPUT_VARIABLE HOST_SYSTEM_PROCESSOR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
+endif()
+
+if(HOST_SYSTEM_NAME STREQUAL "Linux")
+    if(HOST_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        set(HOST_PLATFORM "linux-arm64")
+    else()
+        set(HOST_PLATFORM "linux-x86_64")
+    endif()
 else()
+    message(WARNING "Unknown host OS: ${HOST_SYSTEM_NAME}; defaulting HOST_PLATFORM to linux-x86_64")
     set(HOST_PLATFORM "linux-x86_64")
 endif()
 
 # Determine if cross-compiling
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET_OS STREQUAL "linux")
+if(HOST_SYSTEM_NAME STREQUAL "Linux" AND TARGET_OS STREQUAL "linux")
     # Check if target arch matches host arch
-    if(TARGET_ARCH STREQUAL "x86_64" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    if(TARGET_ARCH STREQUAL "x86_64" AND HOST_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         set(IS_CROSS_COMPILE FALSE)
-    elseif(TARGET_ARCH MATCHES "arm64|aarch64" AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    elseif(TARGET_ARCH MATCHES "arm64|aarch64" AND HOST_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
         set(IS_CROSS_COMPILE FALSE)
     else()
         set(IS_CROSS_COMPILE TRUE)
@@ -58,6 +81,8 @@ else()
 endif()
 
 message(STATUS "========================================")
+message(STATUS "Host Platform: ${HOST_PLATFORM}")
+message(STATUS "Host CPU: ${HOST_SYSTEM_PROCESSOR}")
 message(STATUS "Target Platform: ${TARGET_PLATFORM}")
 message(STATUS "Target OS: ${TARGET_OS}")
 message(STATUS "Target Arch: ${TARGET_ARCH}")
@@ -178,6 +203,26 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         -no-feature-concurrent
         ${QT_PLATFORM_ARGS}
     )
+
+    if(IS_CROSS_COMPILE AND TARGET_OS STREQUAL "linux")
+        set(SYSROOT_DIR "/")
+        if(TARGET_PLATFORM STREQUAL "linux-arm64")
+            set(PKG_CONFIG_PATH "/usr/lib/aarch64-linux-gnu/pkgconfig")
+        elseif(TARGET_PLATFORM STREQUAL "linux-x86_64")
+            set(PKG_CONFIG_PATH "/usr/lib/x86_64-linux-gnu/pkgconfig")
+        endif()
+
+        list(APPEND QT_CONFIGURE_CMD
+            -sysroot ${SYSROOT_DIR}
+            -pkg-config
+        )
+        list(PREPEND QT_CONFIGURE_CMD
+            ${CMAKE_COMMAND} -E env
+            PKG_CONFIG_PATH=${PKG_CONFIG_PATH}
+            PKG_CONFIG_LIBDIR=${PKG_CONFIG_PATH}
+            PKG_CONFIG_SYSROOT_DIR=${SYSROOT_DIR}
+        )
+    endif()
 
     # Add cross-compile options if needed
     # Qt6 uses CMake internally - pass toolchain file via -- options
@@ -339,10 +384,119 @@ else()
 endif()
 
 #######################################
+# OpenSSL (static library for HTTPS)
+#######################################
+set(OPENSSL_INSTALL_DIR "${PREBUILT_DIR}/openssl")
+set(OPENSSL_STAMP_FILE "${PREBUILT_DIR}/.openssl-stamp")
+
+# Only build OpenSSL for Linux (Windows uses Schannel)
+if(TARGET_OS STREQUAL "linux" AND NOT EXISTS "${OPENSSL_STAMP_FILE}")
+    message(STATUS "Building OpenSSL (static)...")
+
+    # Determine OpenSSL target platform
+    if(TARGET_ARCH STREQUAL "x86_64")
+        set(OPENSSL_TARGET "linux-x86_64")
+    else()
+        set(OPENSSL_TARGET "linux-aarch64")
+    endif()
+
+    # Cross-compilation: set CC directly
+    set(OPENSSL_CC_ENV "")
+    if(IS_CROSS_COMPILE)
+        if(TARGET_PLATFORM STREQUAL "linux-x86_64")
+            set(OPENSSL_CC_ENV "CC=x86_64-linux-gnu-gcc")
+        elseif(TARGET_PLATFORM STREQUAL "linux-arm64")
+            set(OPENSSL_CC_ENV "CC=aarch64-linux-gnu-gcc")
+        endif()
+    endif()
+
+    ExternalProject_Add(openssl_external
+        GIT_REPOSITORY https://github.com/openssl/openssl.git
+        GIT_TAG openssl-3.2.0
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES ""
+
+        PREFIX ${PREBUILT_DIR}/openssl-build
+        SOURCE_DIR ${PREBUILT_DIR}/openssl-src
+        BINARY_DIR ${PREBUILT_DIR}/openssl-src
+        INSTALL_DIR ${OPENSSL_INSTALL_DIR}
+
+        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env ${OPENSSL_CC_ENV}
+            <SOURCE_DIR>/Configure ${OPENSSL_TARGET}
+            --prefix=${OPENSSL_INSTALL_DIR}
+            --openssldir=${OPENSSL_INSTALL_DIR}/ssl
+            --libdir=lib
+            no-shared
+            no-tests
+            no-docs
+            no-apps
+            no-engine
+            no-legacy
+            no-dso
+            no-comp
+
+        BUILD_COMMAND make -j${NPROC} build_libs
+        INSTALL_COMMAND make install_sw
+        COMMAND ${CMAKE_COMMAND} -E touch ${OPENSSL_STAMP_FILE}
+
+        USES_TERMINAL_BUILD TRUE
+    )
+
+    set(OPENSSL_DEPENDENCY openssl_external)
+else()
+    if(TARGET_OS STREQUAL "linux")
+        message(STATUS "Using cached OpenSSL from ${OPENSSL_INSTALL_DIR}")
+    endif()
+    set(OPENSSL_DEPENDENCY "")
+endif()
+
+#######################################
 # curl (static library for HTTP requests)
 #######################################
 if(NOT EXISTS "${CURL_STAMP_FILE}")
     message(STATUS "Building curl (static)...")
+
+    # SSL backend: Use Schannel for Windows, our static OpenSSL for Linux
+    if(TARGET_OS STREQUAL "windows")
+        set(CURL_SSL_ARGS -DCURL_USE_SCHANNEL=ON -DCURL_USE_OPENSSL=OFF)
+    else()
+        # Linux: use our statically built OpenSSL
+        set(CURL_SSL_ARGS
+            -DCURL_USE_OPENSSL=ON
+            -DOPENSSL_ROOT_DIR=${OPENSSL_INSTALL_DIR}
+            -DOPENSSL_USE_STATIC_LIBS=TRUE
+        )
+    endif()
+
+    # Cross-compilation: pass compiler directly (toolchain file not always honored)
+    set(CURL_CROSS_ARGS "")
+    if(IS_CROSS_COMPILE)
+        if(TARGET_PLATFORM STREQUAL "linux-x86_64")
+            set(CURL_CROSS_ARGS
+                -DCMAKE_C_COMPILER=x86_64-linux-gnu-gcc
+                -DCMAKE_CXX_COMPILER=x86_64-linux-gnu-g++
+                -DCMAKE_SYSTEM_NAME=Linux
+            )
+        elseif(TARGET_PLATFORM STREQUAL "linux-arm64")
+            set(CURL_CROSS_ARGS
+                -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
+                -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+                -DCMAKE_SYSTEM_NAME=Linux
+            )
+        elseif(TARGET_PLATFORM STREQUAL "windows-x86_64")
+            set(CURL_CROSS_ARGS
+                -DCMAKE_C_COMPILER=/usr/bin/x86_64-w64-mingw32-gcc
+                -DCMAKE_CXX_COMPILER=/usr/bin/x86_64-w64-mingw32-g++
+                -DCMAKE_SYSTEM_NAME=Windows
+            )
+        elseif(TARGET_PLATFORM STREQUAL "windows-arm64")
+            set(CURL_CROSS_ARGS
+                -DCMAKE_C_COMPILER=aarch64-w64-mingw32-clang
+                -DCMAKE_CXX_COMPILER=aarch64-w64-mingw32-clang++
+                -DCMAKE_SYSTEM_NAME=Windows
+            )
+        endif()
+    endif()
 
     ExternalProject_Add(curl_external
         GIT_REPOSITORY https://github.com/curl/curl.git
@@ -359,15 +513,19 @@ if(NOT EXISTS "${CURL_STAMP_FILE}")
             -DCMAKE_BUILD_TYPE=Release
             -DBUILD_SHARED_LIBS=OFF
             -DBUILD_CURL_EXE=OFF
-            -DCURL_USE_OPENSSL=ON
+            ${CURL_SSL_ARGS}
             -DCURL_USE_LIBSSH2=OFF
             -DCURL_ZLIB=OFF
             -DHTTP_ONLY=ON
+            -DCURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG=ON
+            -DENABLE_UNIX_SOCKETS=OFF
+            ${CURL_CROSS_ARGS}
 
         BUILD_COMMAND cmake --build <BINARY_DIR> --parallel ${NPROC}
         INSTALL_COMMAND cmake --install <BINARY_DIR>
         COMMAND ${CMAKE_COMMAND} -E touch ${CURL_STAMP_FILE}
 
+        DEPENDS ${OPENSSL_DEPENDENCY}
         USES_TERMINAL_BUILD TRUE
     )
 
@@ -382,6 +540,36 @@ endif()
 #######################################
 if(NOT EXISTS "${GLOG_STAMP_FILE}")
     message(STATUS "Building glog (static)...")
+
+    # Cross-compilation: pass compiler directly (toolchain file not always honored)
+    set(GLOG_CROSS_ARGS "")
+    if(IS_CROSS_COMPILE)
+        if(TARGET_PLATFORM STREQUAL "linux-x86_64")
+            set(GLOG_CROSS_ARGS
+                -DCMAKE_C_COMPILER=x86_64-linux-gnu-gcc
+                -DCMAKE_CXX_COMPILER=x86_64-linux-gnu-g++
+                -DCMAKE_SYSTEM_NAME=Linux
+            )
+        elseif(TARGET_PLATFORM STREQUAL "linux-arm64")
+            set(GLOG_CROSS_ARGS
+                -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
+                -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+                -DCMAKE_SYSTEM_NAME=Linux
+            )
+        elseif(TARGET_PLATFORM STREQUAL "windows-x86_64")
+            set(GLOG_CROSS_ARGS
+                -DCMAKE_C_COMPILER=/usr/bin/x86_64-w64-mingw32-gcc
+                -DCMAKE_CXX_COMPILER=/usr/bin/x86_64-w64-mingw32-g++
+                -DCMAKE_SYSTEM_NAME=Windows
+            )
+        elseif(TARGET_PLATFORM STREQUAL "windows-arm64")
+            set(GLOG_CROSS_ARGS
+                -DCMAKE_C_COMPILER=aarch64-w64-mingw32-clang
+                -DCMAKE_CXX_COMPILER=aarch64-w64-mingw32-clang++
+                -DCMAKE_SYSTEM_NAME=Windows
+            )
+        endif()
+    endif()
 
     ExternalProject_Add(glog_external
         GIT_REPOSITORY https://github.com/google/glog.git
@@ -400,6 +588,7 @@ if(NOT EXISTS "${GLOG_STAMP_FILE}")
             -DWITH_GFLAGS=OFF
             -DWITH_GTEST=OFF
             -DWITH_UNWIND=OFF
+            ${GLOG_CROSS_ARGS}
 
         BUILD_COMMAND cmake --build <BINARY_DIR> --parallel ${NPROC}
         INSTALL_COMMAND cmake --install <BINARY_DIR>
@@ -415,6 +604,26 @@ else()
 endif()
 
 #######################################
+# Dependency umbrella target
+#######################################
+add_custom_target(deps)
+if(QT_DEPENDENCY)
+    add_dependencies(deps ${QT_DEPENDENCY})
+endif()
+if(FONTS_DEPENDENCY)
+    add_dependencies(deps ${FONTS_DEPENDENCY})
+endif()
+if(OPENSSL_DEPENDENCY)
+    add_dependencies(deps ${OPENSSL_DEPENDENCY})
+endif()
+if(CURL_DEPENDENCY)
+    add_dependencies(deps ${CURL_DEPENDENCY})
+endif()
+if(GLOG_DEPENDENCY)
+    add_dependencies(deps ${GLOG_DEPENDENCY})
+endif()
+
+#######################################
 # Main Project
 #######################################
 set(APP_CMAKE_ARGS
@@ -424,6 +633,7 @@ set(APP_CMAKE_ARGS
     -DPREBUILT_DIR=${PREBUILT_DIR}
     -DTARGET_PLATFORM=${TARGET_PLATFORM}
     -DCURL_ROOT=${CURL_INSTALL_DIR}
+    -DOPENSSL_ROOT=${OPENSSL_INSTALL_DIR}
     -Dglog_ROOT=${GLOG_INSTALL_DIR}
     -DUSE_PREBUILT_DEPS=ON
 )
@@ -494,8 +704,9 @@ add_custom_target(distribute
     COMMENT "Creating distribution in ${DIST_DIR}"
 )
 
-# Copy system libraries that Qt plugins depend on (Linux only)
-if(TARGET_OS STREQUAL "linux")
+# Copy system libraries that Qt plugins depend on (Linux native builds only)
+# Cross-compiled builds use Qt's bundled libraries (-qt-freetype, -qt-pcre, etc.)
+if(TARGET_OS STREQUAL "linux" AND NOT IS_CROSS_COMPILE)
     # Find system library directory based on architecture
     if(TARGET_ARCH STREQUAL "x86_64")
         set(SYSTEM_LIB_DIR "/usr/lib/x86_64-linux-gnu")
@@ -509,6 +720,7 @@ if(TARGET_OS STREQUAL "linux")
         COMMAND sh -c "cp -a ${SYSTEM_LIB_DIR}/libjpeg.so* ${DIST_DIR}/lib/"
         # libpcre2-16 for Qt Core
         COMMAND sh -c "cp -a ${SYSTEM_LIB_DIR}/libpcre2-16.so* ${DIST_DIR}/lib/"
+        # Note: OpenSSL is now statically linked, no need to copy .so files
         COMMENT "Copying system libraries for Qt plugins"
     )
 endif()
@@ -596,6 +808,9 @@ if(TARGET_OS STREQUAL "linux")
             ${CMAKE_SOURCE_DIR}/appimage/COPYING
             ${DIST_DIR}/AppDir/
 
+        # Bundle glibc for portability (works for native builds, cross builds need docker)
+        COMMAND bash ${CMAKE_SOURCE_DIR}/cmake/bundle-glibc.sh ${DIST_DIR}/AppDir ${APPIMAGE_ARCH}
+
         # Create AppImage using appimagetool
         # Note: appimagetool outputs to second argument path, linuxdeploy outputs to current dir
         COMMAND ${CMAKE_COMMAND} -E chdir ${APPIMAGE_DIR}
@@ -603,6 +818,55 @@ if(TARGET_OS STREQUAL "linux")
             appimagetool ${DIST_DIR}/AppDir ${APPIMAGE_NAME}
 
         COMMENT "Creating AppImage: ${APPIMAGE_DIR}/${APPIMAGE_NAME}"
+    )
+endif()
+
+#######################################
+# Tests (optional)
+#######################################
+option(BUILD_TESTS "Build the test suite" OFF)
+
+if(BUILD_TESTS)
+    message(STATUS "Building test suite...")
+
+    # Tests are built as a separate ExternalProject to use consistent dependency versions
+    set(TESTS_CMAKE_ARGS
+        -DCMAKE_PREFIX_PATH=${QT_INSTALL_DIR}
+        -DCMAKE_BUILD_TYPE=Release
+        -DPREBUILT_DIR=${PREBUILT_DIR}
+        -DTARGET_PLATFORM=${TARGET_PLATFORM}
+        -DCURL_ROOT=${CURL_INSTALL_DIR}
+        -DOPENSSL_ROOT=${OPENSSL_INSTALL_DIR}
+        -Dglog_ROOT=${GLOG_INSTALL_DIR}
+        -DUSE_PREBUILT_DEPS=ON
+    )
+
+    # Add toolchain file for cross-compilation
+    if(IS_CROSS_COMPILE)
+        if(EXISTS "${TOOLCHAIN_FILE}")
+            list(APPEND TESTS_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE})
+        endif()
+    endif()
+
+    ExternalProject_Add(tests
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/tests
+        BINARY_DIR ${CMAKE_BINARY_DIR}/tests-build
+
+        CMAKE_ARGS ${TESTS_CMAKE_ARGS}
+
+        BUILD_COMMAND cmake --build <BINARY_DIR> --parallel ${NPROC}
+        INSTALL_COMMAND ""
+
+        DEPENDS ${QT_DEPENDENCY} ${CURL_DEPENDENCY} ${GLOG_DEPENDENCY}
+        USES_TERMINAL_BUILD TRUE
+    )
+
+    # Convenience target to run all tests
+    add_custom_target(check
+        DEPENDS tests
+        COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR}/tests-build --output-on-failure --parallel
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/tests-build
+        COMMENT "Running all tests..."
     )
 endif()
 
@@ -616,11 +880,17 @@ message(STATUS "    ./build.sh deps           # Build Qt + deps (~2-3 hours)")
 message(STATUS "    ./build.sh app            # Build application (~5 min)")
 message(STATUS "    ./build.sh distribute     # Create distribution")
 message(STATUS "    ./build.sh appimage       # Create AppImage")
+message(STATUS "    ./build.sh test           # Build and run tests")
 message(STATUS "")
 message(STATUS "  Manual cmake:")
 message(STATUS "    cmake -B .build/${TARGET_PLATFORM} -DTARGET_PLATFORM=${TARGET_PLATFORM}")
 message(STATUS "    cmake --build .build/${TARGET_PLATFORM}")
 message(STATUS "    cmake --build .build/${TARGET_PLATFORM} --target distribute")
+message(STATUS "")
+message(STATUS "  Testing (manual cmake):")
+message(STATUS "    cmake -B .build/${TARGET_PLATFORM} -DTARGET_PLATFORM=${TARGET_PLATFORM} -DBUILD_TESTS=ON")
+message(STATUS "    cmake --build .build/${TARGET_PLATFORM} --target tests")
+message(STATUS "    cmake --build .build/${TARGET_PLATFORM} --target check")
 if(TARGET_OS STREQUAL "linux")
     message(STATUS "    ./.distribute/${TARGET_PLATFORM}/run.sh")
 else()

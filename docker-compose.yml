@@ -79,28 +79,26 @@ services:
 
   #######################################
   # Linux x86_64 build services
-  # Uses platform directive for native/QEMU builds
+  # Uses cross-compilation (works on any host architecture)
   #######################################
 
   deps-linux-x86_64:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/amd64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
     command: >
       bash -c "
         cmake -B .build/linux-x86_64 -DTARGET_PLATFORM=linux-x86_64 &&
-        cmake --build .build/linux-x86_64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+        cmake --build .build/linux-x86_64 --target deps -j$(nproc)
       "
 
   app-linux-x86_64:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/amd64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
@@ -114,7 +112,6 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/amd64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
@@ -127,7 +124,6 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/amd64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
@@ -135,6 +131,19 @@ services:
     command: >
       bash -c "
         cmake --build .build/linux-x86_64 --target appimage
+      "
+
+  # Bundle glibc into x86_64 AppImage (requires platform emulation on ARM64 hosts)
+  bundle-glibc-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        bash /workspace/cmake/bundle-glibc.sh /workspace/.distribute/linux-x86_64/AppDir x86_64
       "
 
   #######################################
@@ -146,21 +155,19 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/arm64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
     command: >
       bash -c "
         cmake -B .build/linux-arm64 -DTARGET_PLATFORM=linux-arm64 &&
-        cmake --build .build/linux-arm64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+        cmake --build .build/linux-arm64 --target deps -j$(nproc)
       "
 
   app-linux-arm64:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/arm64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
@@ -174,7 +181,6 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/arm64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
@@ -187,7 +193,6 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    platform: linux/arm64
     volumes:
       - .:/workspace:rw
     working_dir: /workspace
@@ -212,7 +217,7 @@ services:
     command: >
       bash -c "
         cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64 &&
-        cmake --build .build/windows-x86_64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+        cmake --build .build/windows-x86_64 --target deps -j$(nproc)
       "
 
   app-windows-x86_64:
@@ -255,7 +260,7 @@ services:
     command: >
       bash -c "
         cmake -B .build/windows-arm64 -DTARGET_PLATFORM=windows-arm64 &&
-        cmake --build .build/windows-arm64 --target qt6_external --target curl_external --target glog_external --target noto_emoji -j$(nproc)
+        cmake --build .build/windows-arm64 --target deps -j$(nproc)
       "
 
   app-windows-arm64:
@@ -281,4 +286,56 @@ services:
     command: >
       bash -c "
         cmake --build .build/windows-arm64 --target distribute
+      "
+
+  #######################################
+  # AppImage test services (execution only)
+  #######################################
+
+  test-linux-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/arm64
+    volumes:
+      - ./.distribute:/dist:ro
+    command: >
+      bash -c "
+        set -e;
+        LOG=/tmp/app.log;
+        QT_QPA_PLATFORM=offscreen /dist/RickAndMortyViewer-aarch64.AppImage --appimage-extract-and-run >\"$$LOG\" 2>&1 &
+        APP_PID=$$!;
+        trap 'kill $$APP_PID 2>/dev/null || true' EXIT;
+        sleep 8;
+        if grep -q 'HTTP response code: 200' \"$$LOG\"; then
+          echo 'HTTPS OK';
+        else
+          echo 'HTTPS check failed';
+          tail -n 200 \"$$LOG\";
+          exit 1;
+        fi
+      "
+
+  test-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ./.distribute:/dist:ro
+    command: >
+      bash -c "
+        set -e;
+        LOG=/tmp/app.log;
+        QT_QPA_PLATFORM=offscreen /dist/RickAndMortyViewer-x86_64.AppImage --appimage-extract-and-run >\"$$LOG\" 2>&1 &
+        APP_PID=$$!;
+        trap 'kill $$APP_PID 2>/dev/null || true' EXIT;
+        sleep 8;
+        if grep -q 'HTTP response code: 200' \"$$LOG\"; then
+          echo 'HTTPS OK';
+        else
+          echo 'HTTPS check failed';
+          tail -n 200 \"$$LOG\";
+          exit 1;
+        fi
       "

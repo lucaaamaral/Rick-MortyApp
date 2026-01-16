@@ -4,16 +4,62 @@
 SELF=$(readlink -f "$0")
 HERE=${SELF%/*}
 
-# Set up library paths
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+# Set up environment
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
 export QML2_IMPORT_PATH="${HERE}/usr/qml"
-
-# Use bundled fonts via fontconfig
 export FONTCONFIG_FILE="${HERE}/usr/lib/fonts/fonts.conf"
-
-# Default to X11 (xcb) if no platform specified
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 
-# Run the application
+# Use bundled glibc only when the host glibc is older than our build baseline.
+version_lt() {
+    [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ] && [ "$1" != "$2" ]
+}
+
+HOST_GLIBC=""
+if command -v getconf >/dev/null 2>&1; then
+    HOST_GLIBC=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')
+fi
+if [ -z "$HOST_GLIBC" ] && command -v ldd >/dev/null 2>&1; then
+    HOST_GLIBC=$(ldd --version 2>/dev/null | head -n1 | awk '{print $NF}')
+fi
+
+get_bundled_glibc_version() {
+    if [ -x "${HERE}/usr/lib/glibc/ld-linux-x86-64.so.2" ]; then
+        "${HERE}/usr/lib/glibc/ld-linux-x86-64.so.2" --version 2>/dev/null | head -n1 | awk '{print $NF}'
+        return
+    fi
+    if [ -x "${HERE}/usr/lib/glibc/ld-linux-aarch64.so.1" ]; then
+        "${HERE}/usr/lib/glibc/ld-linux-aarch64.so.1" --version 2>/dev/null | head -n1 | awk '{print $NF}'
+        return
+    fi
+    if [ -r "${HERE}/usr/lib/glibc/libc.so.6" ] && command -v grep >/dev/null 2>&1; then
+        grep -ao 'GLIBC_[0-9.]*' "${HERE}/usr/lib/glibc/libc.so.6" 2>/dev/null | \
+            sed 's/GLIBC_//' | sort -V | tail -n1
+    fi
+}
+
+BUNDLED_GLIBC="$(get_bundled_glibc_version)"
+
+USE_BUNDLED_GLIBC=false
+if [ -n "$BUNDLED_GLIBC" ]; then
+    if [ -z "$HOST_GLIBC" ] || version_lt "$HOST_GLIBC" "$BUNDLED_GLIBC"; then
+        USE_BUNDLED_GLIBC=true
+    fi
+fi
+
+if [ "$USE_BUNDLED_GLIBC" = "true" ]; then
+    # AppImage is architecture-specific, so we just check for the bundled linker
+    if [ -f "${HERE}/usr/lib/glibc/ld-linux-x86-64.so.2" ]; then
+        exec "${HERE}/usr/lib/glibc/ld-linux-x86-64.so.2" \
+            --library-path "${HERE}/usr/lib/glibc:${HERE}/usr/lib" \
+            "${HERE}/usr/bin/RickAndMortyViewer" "$@"
+    elif [ -f "${HERE}/usr/lib/glibc/ld-linux-aarch64.so.1" ]; then
+        exec "${HERE}/usr/lib/glibc/ld-linux-aarch64.so.1" \
+            --library-path "${HERE}/usr/lib/glibc:${HERE}/usr/lib" \
+            "${HERE}/usr/bin/RickAndMortyViewer" "$@"
+    fi
+fi
+
+# Fall back to system glibc
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
 exec "${HERE}/usr/bin/RickAndMortyViewer" "$@"

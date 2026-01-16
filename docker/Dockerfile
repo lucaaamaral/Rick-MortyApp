@@ -1,11 +1,27 @@
 # Build environment for Rick and Morty Viewer
 # Provides all dependencies needed to build Qt6 and the application
-FROM debian:bookworm
+FROM debian:bullseye
 
 ARG TARGETARCH
 
 # Install build essentials and Qt dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -e; \
+    ARCH="$(dpkg --print-architecture)"; \
+    if [ "$ARCH" = "amd64" ]; then \
+        FOREIGN_ARCH="arm64"; \
+    elif [ "$ARCH" = "arm64" ]; then \
+        FOREIGN_ARCH="amd64"; \
+    else \
+        echo "Unsupported architecture: $ARCH"; \
+        exit 1; \
+    fi; \
+    dpkg --add-architecture "$FOREIGN_ARCH"; \
+    if [ "$ARCH" = "amd64" ]; then \
+        CROSS_COMPILERS="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
+    else \
+        CROSS_COMPILERS="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu"; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
     # Build tools
     build-essential \
     cmake \
@@ -19,10 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     file \
     xz-utils \
     # Linux cross-compilers (bidirectional arm64 <-> x86_64)
-    gcc-x86-64-linux-gnu \
-    g++-x86-64-linux-gnu \
-    gcc-aarch64-linux-gnu \
-    g++-aarch64-linux-gnu \
+    ${CROSS_COMPILERS} \
     # Windows x86_64 cross-compiler (MinGW)
     mingw-w64 \
     # Qt6 dependencies - X11/XCB
@@ -74,7 +87,54 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # AppImage tools
     fuse \
     libfuse2 \
-    && rm -rf /var/lib/apt/lists/*
+    # Target sysroots (runtime libs for AppImage bundling)
+    libc6-dev \
+    libxcb1 \
+    libxcb-shm0 \
+    libxcb-render0 \
+    libxcb-shape0 \
+    libxcb-xfixes0 \
+    libxcb-sync1 \
+    libxcb-randr0 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-icccm4 \
+    libxcb-render-util0 \
+    libxcb-util1 \
+    libxcb-xinerama0 \
+    libxcb-xkb1 \
+    libxcb-cursor0 \
+    libx11-6 \
+    libxau6 \
+    libxdmcp6 \
+    libglib2.0-0 \
+    libfontconfig1 \
+    libc6-dev:${FOREIGN_ARCH} \
+    libxcb1:${FOREIGN_ARCH} \
+    libxcb-shm0:${FOREIGN_ARCH} \
+    libxcb-render0:${FOREIGN_ARCH} \
+    libxcb-shape0:${FOREIGN_ARCH} \
+    libxcb-xfixes0:${FOREIGN_ARCH} \
+    libxcb-sync1:${FOREIGN_ARCH} \
+    libxcb-randr0:${FOREIGN_ARCH} \
+    libxcb-image0:${FOREIGN_ARCH} \
+    libxcb-keysyms1:${FOREIGN_ARCH} \
+    libxcb-icccm4:${FOREIGN_ARCH} \
+    libxcb-render-util0:${FOREIGN_ARCH} \
+    libxcb-util1:${FOREIGN_ARCH} \
+    libxcb-xinerama0:${FOREIGN_ARCH} \
+    libxcb-xkb1:${FOREIGN_ARCH} \
+    libxcb-cursor0:${FOREIGN_ARCH} \
+    libx11-6:${FOREIGN_ARCH} \
+    libxau6:${FOREIGN_ARCH} \
+    libxdmcp6:${FOREIGN_ARCH} \
+    libglib2.0-0:${FOREIGN_ARCH} \
+    libfontconfig1:${FOREIGN_ARCH} \
+    && rm -rf /var/lib/apt/lists/*; \
+    if [ "$ARCH" = "arm64" ]; then \
+        ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc; \
+        ln -sf /usr/bin/g++ /usr/bin/aarch64-linux-gnu-g++; \
+    fi
 
 # Download AppImage tools
 RUN ARCH=$(uname -m) && \

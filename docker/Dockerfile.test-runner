@@ -1,0 +1,38 @@
+# Minimal test runner for Linux GTest binaries
+# Used for running unit/integration/property tests in CI
+FROM debian:bullseye-slim
+
+# Install minimal C++ runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libc6 \
+    libstdc++6 \
+    libgcc-s1 \
+    ca-certificates \
+    # XCB libraries for Qt (headless)
+    libxcb1 \
+    libxcb-cursor0 \
+    libxcb-glx0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-shm0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-xinerama0 \
+    libxcb-xkb1 \
+    libxkbcommon0 \
+    libxkbcommon-x11-0 \
+    # OpenGL (software rendering for headless)
+    libgl1-mesa-dri \
+    libgl1-mesa-glx \
+    libegl1-mesa \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set headless display for Qt
+ENV QT_QPA_PLATFORM=offscreen
+ENV GTEST_COLOR=no
+
+WORKDIR /workspace

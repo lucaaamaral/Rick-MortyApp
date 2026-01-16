@@ -33,8 +33,10 @@ target_include_directories(tests_property PRIVATE
 
 # Register tests with CTest
 include(GoogleTest)
+# Use DISCOVERY_MODE PRE_TEST to avoid running cross-compiled binaries at configure time
 gtest_discover_tests(tests_property
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     PROPERTIES
         LABELS "property"
+    DISCOVERY_MODE PRE_TEST
 )

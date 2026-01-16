@@ -289,10 +289,170 @@ services:
       "
 
   #######################################
-  # AppImage test services (execution only)
+  # GTest build services (cross-compile tests)
   #######################################
 
-  test-linux-arm64:
+  test-build-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-x86_64 -DTARGET_PLATFORM=linux-x86_64 -DBUILD_TESTS=ON &&
+        cmake --build .build/linux-x86_64 --target tests -j$$(nproc)
+      "
+
+  test-build-linux-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/linux-arm64 -DTARGET_PLATFORM=linux-arm64 -DBUILD_TESTS=ON &&
+        cmake --build .build/linux-arm64 --target tests -j$$(nproc)
+      "
+
+  test-build-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64 -DBUILD_TESTS=ON &&
+        cmake --build .build/windows-x86_64 --target tests -j$$(nproc)
+      "
+
+  test-build-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        cmake -B .build/windows-arm64 -DTARGET_PLATFORM=windows-arm64 -DBUILD_TESTS=ON &&
+        cmake --build .build/windows-arm64 --target tests -j$$(nproc)
+      "
+
+  #######################################
+  # GTest run services (platform emulation)
+  #######################################
+
+  test-run-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test-runner
+    platform: linux/amd64
+    volumes:
+      - .:/workspace:ro
+      - ./test-results:/results:rw
+    working_dir: /workspace
+    environment:
+      - GTEST_COLOR=no
+      - QT_QPA_PLATFORM=offscreen
+    command: >
+      bash -c "
+        mkdir -p /results &&
+        BUILD_DIR=/workspace/.build/linux-x86_64/tests-build &&
+        for test_dir in unit property integration; do
+          test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}\" &&
+          if [ -x \"$$test_exe\" ]; then
+            echo \"Running tests_$${test_dir}...\" &&
+            $$test_exe --gtest_output=xml:/results/linux-x86_64-tests_$${test_dir}.xml || exit 1;
+          fi
+        done
+      "
+
+  test-run-linux-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test-runner
+    platform: linux/arm64
+    volumes:
+      - .:/workspace:ro
+      - ./test-results:/results:rw
+    working_dir: /workspace
+    environment:
+      - GTEST_COLOR=no
+      - QT_QPA_PLATFORM=offscreen
+    command: >
+      bash -c "
+        mkdir -p /results &&
+        BUILD_DIR=/workspace/.build/linux-arm64/tests-build &&
+        for test_dir in unit property integration; do
+          test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}\" &&
+          if [ -x \"$$test_exe\" ]; then
+            echo \"Running tests_$${test_dir}...\" &&
+            $$test_exe --gtest_output=xml:/results/linux-arm64-tests_$${test_dir}.xml || exit 1;
+          fi
+        done
+      "
+
+  test-run-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.wine64
+    platform: linux/amd64
+    volumes:
+      - .:/workspace:ro
+      - ./test-results:/results:rw
+    working_dir: /workspace
+    environment:
+      - WINEDEBUG=-all
+      - WINEPREFIX=/tmp/wine
+    command: >
+      bash -c "
+        mkdir -p /results &&
+        BUILD_DIR=/workspace/.build/windows-x86_64/tests-build &&
+        for test_dir in unit property integration; do
+          test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe\" &&
+          if [ -f \"$$test_exe\" ]; then
+            echo \"Running tests_$${test_dir}.exe via Wine...\" &&
+            wine64 $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml || exit 1;
+          fi
+        done
+      "
+
+  test-run-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.wine-arm64
+    platform: linux/arm64
+    volumes:
+      - .:/workspace:ro
+      - ./test-results:/results:rw
+    working_dir: /workspace
+    environment:
+      - WINEDEBUG=-all
+      - WINEPREFIX=/tmp/wine
+    command: >
+      bash -c "
+        mkdir -p /results &&
+        BUILD_DIR=/workspace/.build/windows-arm64/tests-build &&
+        for test_dir in unit property integration; do
+          test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe\" &&
+          if [ -f \"$$test_exe\" ]; then
+            echo \"Running tests_$${test_dir}.exe via Wine...\" &&
+            wine $$test_exe --gtest_output=xml:/results/windows-arm64-tests_$${test_dir}.xml || exit 1;
+          fi
+        done
+      "
+
+  #######################################
+  # AppImage smoke test services (execution only)
+  #######################################
+
+  smoke-test-linux-arm64:
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -316,7 +476,7 @@ services:
         fi
       "
 
-  test-linux-x86_64:
+  smoke-test-linux-x86_64:
     build:
       context: .
       dockerfile: docker/Dockerfile

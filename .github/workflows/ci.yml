@@ -1,0 +1,345 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      force_rebuild_deps:
+        description: 'Force rebuild dependencies (ignore cache)'
+        type: boolean
+        default: false
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  # =============================================
+  # Linux x86_64 - Native build
+  # =============================================
+  build-linux-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache prebuilt dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lib-prebuilt/linux-x86_64/qt6
+            .lib-prebuilt/linux-x86_64/curl
+            .lib-prebuilt/linux-x86_64/glog
+            .lib-prebuilt/linux-x86_64/fonts
+            .lib-prebuilt/linux-x86_64/.qt-stamp
+            .lib-prebuilt/linux-x86_64/.curl-stamp
+            .lib-prebuilt/linux-x86_64/.glog-stamp
+          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
+          restore-keys: prebuilt-linux-x86_64-
+
+      - name: Build dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+        run: |
+          docker compose run --rm deps-linux-x86_64
+          # Clean build artifacts to fit in cache
+          rm -rf .lib-prebuilt/linux-x86_64/qt6-build
+          rm -rf .lib-prebuilt/linux-x86_64/qt6-src
+          rm -rf .lib-prebuilt/linux-x86_64/curl-build
+          rm -rf .lib-prebuilt/linux-x86_64/curl-src
+          rm -rf .lib-prebuilt/linux-x86_64/glog-build
+          rm -rf .lib-prebuilt/linux-x86_64/glog-src
+        timeout-minutes: 240
+
+      - name: Build application and AppImage
+        run: |
+          docker compose run --rm app-linux-x86_64
+          docker compose run --rm distribute-linux-x86_64
+          docker compose run --rm appimage-linux-x86_64
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-linux-x86_64
+          path: .distribute/RickAndMortyViewer-x86_64.AppImage
+          retention-days: 30
+
+      - name: Create prebuilt tarball
+        run: |
+          cd .lib-prebuilt/linux-x86_64
+          tar -cJf ../../prebuilt-linux-x86_64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+
+      - name: Upload prebuilt tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-linux-x86_64
+          path: prebuilt-linux-x86_64.tar.xz
+          retention-days: 90
+
+  # =============================================
+  # Linux ARM64 - QEMU emulation
+  # =============================================
+  build-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache prebuilt dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lib-prebuilt/linux-arm64/qt6
+            .lib-prebuilt/linux-arm64/curl
+            .lib-prebuilt/linux-arm64/glog
+            .lib-prebuilt/linux-arm64/fonts
+            .lib-prebuilt/linux-arm64/.qt-stamp
+            .lib-prebuilt/linux-arm64/.curl-stamp
+            .lib-prebuilt/linux-arm64/.glog-stamp
+          key: prebuilt-linux-arm64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
+          restore-keys: prebuilt-linux-arm64-
+
+      - name: Build dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+        run: |
+          docker compose run --rm deps-linux-arm64
+          rm -rf .lib-prebuilt/linux-arm64/qt6-build
+          rm -rf .lib-prebuilt/linux-arm64/qt6-src
+          rm -rf .lib-prebuilt/linux-arm64/curl-build
+          rm -rf .lib-prebuilt/linux-arm64/curl-src
+          rm -rf .lib-prebuilt/linux-arm64/glog-build
+          rm -rf .lib-prebuilt/linux-arm64/glog-src
+        timeout-minutes: 600
+
+      - name: Build application and AppImage
+        run: |
+          docker compose run --rm app-linux-arm64
+          docker compose run --rm distribute-linux-arm64
+          docker compose run --rm appimage-linux-arm64
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-linux-arm64
+          path: .distribute/RickAndMortyViewer-aarch64.AppImage
+          retention-days: 30
+
+      - name: Create prebuilt tarball
+        run: |
+          cd .lib-prebuilt/linux-arm64
+          tar -cJf ../../prebuilt-linux-arm64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+
+      - name: Upload prebuilt tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-linux-arm64
+          path: prebuilt-linux-arm64.tar.xz
+          retention-days: 90
+
+  # =============================================
+  # Windows x86_64 - Cross-compile with MinGW
+  # Requires: Host Qt (linux-x86_64) built first
+  # =============================================
+  build-windows-x86_64:
+    runs-on: ubuntu-latest
+    needs: build-linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore host Qt cache (required for cross-compile)
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lib-prebuilt/linux-x86_64/qt6
+            .lib-prebuilt/linux-x86_64/curl
+            .lib-prebuilt/linux-x86_64/glog
+            .lib-prebuilt/linux-x86_64/fonts
+            .lib-prebuilt/linux-x86_64/.qt-stamp
+            .lib-prebuilt/linux-x86_64/.curl-stamp
+            .lib-prebuilt/linux-x86_64/.glog-stamp
+          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
+          fail-on-cache-miss: true
+
+      - name: Cache Windows x86_64 dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lib-prebuilt/windows-x86_64/qt6
+            .lib-prebuilt/windows-x86_64/curl
+            .lib-prebuilt/windows-x86_64/glog
+            .lib-prebuilt/windows-x86_64/fonts
+            .lib-prebuilt/windows-x86_64/.qt-stamp
+            .lib-prebuilt/windows-x86_64/.curl-stamp
+            .lib-prebuilt/windows-x86_64/.glog-stamp
+          key: prebuilt-windows-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
+          restore-keys: prebuilt-windows-x86_64-
+
+      - name: Build dependencies (cross-compile)
+        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+        run: |
+          docker compose run --rm deps-windows-x86_64
+          rm -rf .lib-prebuilt/windows-x86_64/qt6-build
+          rm -rf .lib-prebuilt/windows-x86_64/qt6-src
+          rm -rf .lib-prebuilt/windows-x86_64/curl-build
+          rm -rf .lib-prebuilt/windows-x86_64/curl-src
+          rm -rf .lib-prebuilt/windows-x86_64/glog-build
+          rm -rf .lib-prebuilt/windows-x86_64/glog-src
+        timeout-minutes: 240
+
+      - name: Build application and distribution
+        run: |
+          docker compose run --rm app-windows-x86_64
+          docker compose run --rm distribute-windows-x86_64
+
+      - name: Create Windows zip
+        run: |
+          cd .distribute/windows-x86_64
+          zip -r ../../RickAndMortyViewer-windows-x86_64.zip .
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-x86_64
+          path: RickAndMortyViewer-windows-x86_64.zip
+          retention-days: 30
+
+      - name: Create prebuilt tarball
+        run: |
+          cd .lib-prebuilt/windows-x86_64
+          tar -cJf ../../prebuilt-windows-x86_64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+
+      - name: Upload prebuilt tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-windows-x86_64
+          path: prebuilt-windows-x86_64.tar.xz
+          retention-days: 90
+
+  # =============================================
+  # Windows ARM64 - Cross-compile with llvm-mingw
+  # Requires: Host Qt (linux-x86_64) built first
+  # =============================================
+  build-windows-arm64:
+    runs-on: ubuntu-latest
+    needs: build-linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore host Qt cache (required for cross-compile)
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lib-prebuilt/linux-x86_64/qt6
+            .lib-prebuilt/linux-x86_64/curl
+            .lib-prebuilt/linux-x86_64/glog
+            .lib-prebuilt/linux-x86_64/fonts
+            .lib-prebuilt/linux-x86_64/.qt-stamp
+            .lib-prebuilt/linux-x86_64/.curl-stamp
+            .lib-prebuilt/linux-x86_64/.glog-stamp
+          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
+          fail-on-cache-miss: true
+
+      - name: Cache Windows ARM64 dependencies
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lib-prebuilt/windows-arm64/qt6
+            .lib-prebuilt/windows-arm64/curl
+            .lib-prebuilt/windows-arm64/glog
+            .lib-prebuilt/windows-arm64/fonts
+            .lib-prebuilt/windows-arm64/.qt-stamp
+            .lib-prebuilt/windows-arm64/.curl-stamp
+            .lib-prebuilt/windows-arm64/.glog-stamp
+          key: prebuilt-windows-arm64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
+          restore-keys: prebuilt-windows-arm64-
+
+      - name: Build dependencies (cross-compile)
+        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+        run: |
+          docker compose run --rm deps-windows-arm64
+          rm -rf .lib-prebuilt/windows-arm64/qt6-build
+          rm -rf .lib-prebuilt/windows-arm64/qt6-src
+          rm -rf .lib-prebuilt/windows-arm64/curl-build
+          rm -rf .lib-prebuilt/windows-arm64/curl-src
+          rm -rf .lib-prebuilt/windows-arm64/glog-build
+          rm -rf .lib-prebuilt/windows-arm64/glog-src
+        timeout-minutes: 300
+
+      - name: Build application and distribution
+        run: |
+          docker compose run --rm app-windows-arm64
+          docker compose run --rm distribute-windows-arm64
+
+      - name: Create Windows zip
+        run: |
+          cd .distribute/windows-arm64
+          zip -r ../../RickAndMortyViewer-windows-arm64.zip .
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-arm64
+          path: RickAndMortyViewer-windows-arm64.zip
+          retention-days: 30
+
+      - name: Create prebuilt tarball
+        run: |
+          cd .lib-prebuilt/windows-arm64
+          tar -cJf ../../prebuilt-windows-arm64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+
+      - name: Upload prebuilt tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-windows-arm64
+          path: prebuilt-windows-arm64.tar.xz
+          retention-days: 90
+
+  # =============================================
+  # Release - Create GitHub Release on tags
+  # =============================================
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x86_64, build-windows-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            artifacts/appimage-linux-x86_64/RickAndMortyViewer-x86_64.AppImage
+            artifacts/appimage-linux-arm64/RickAndMortyViewer-aarch64.AppImage
+            artifacts/dist-windows-x86_64/RickAndMortyViewer-windows-x86_64.zip
+            artifacts/dist-windows-arm64/RickAndMortyViewer-windows-arm64.zip
+            artifacts/prebuilt-linux-x86_64/prebuilt-linux-x86_64.tar.xz
+            artifacts/prebuilt-linux-arm64/prebuilt-linux-arm64.tar.xz
+            artifacts/prebuilt-windows-x86_64/prebuilt-windows-x86_64.tar.xz
+            artifacts/prebuilt-windows-arm64/prebuilt-windows-arm64.tar.xz

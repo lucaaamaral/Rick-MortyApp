@@ -17,6 +17,9 @@ set(RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2)
 message(STATUS "Found Qt6 ${Qt6_VERSION} at ${Qt6_DIR}")
 
+# Threads (needed by glog when statically linked)
+find_package(Threads REQUIRED)
+
 # Option to use prebuilt dependencies from superbuild
 option(USE_PREBUILT_DEPS "Use prebuilt curl/glog from superbuild" OFF)
 
@@ -61,9 +64,17 @@ if(USE_PREBUILT_DEPS)
     find_package(glog REQUIRED)
     message(STATUS "Found glog at ${glog_DIR}")
 
-    # Only fetch json
-    message(STATUS "Fetching nlohmann_json...")
-    FetchContent_MakeAvailable(json)
+    # Use prebuilt nlohmann_json when available
+    if(DEFINED JSON_ROOT)
+        message(STATUS "Using prebuilt nlohmann_json from ${JSON_ROOT}")
+        add_library(nlohmann_json::nlohmann_json INTERFACE IMPORTED)
+        set_target_properties(nlohmann_json::nlohmann_json PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${JSON_ROOT}/include"
+        )
+    else()
+        message(STATUS "Fetching nlohmann_json...")
+        FetchContent_MakeAvailable(json)
+    endif()
 else()
     message(STATUS "Building dependencies from source via FetchContent")
 
@@ -137,6 +148,10 @@ else()
     )
 endif()
 target_compile_definitions(core PUBLIC CURL_STATICLIB)
+target_link_libraries(core PUBLIC Threads::Threads)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(core PUBLIC pthread)
+endif()
 
 # UI library (Qt/QML specific)
 add_library(ui STATIC
@@ -169,6 +184,7 @@ add_executable(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ui
     Qt6::Widgets
+    Threads::Threads
 )
 
 # Copy QML files for development

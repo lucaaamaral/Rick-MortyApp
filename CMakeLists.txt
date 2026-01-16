@@ -95,6 +95,8 @@ message(STATUS "========================================")
 set(PREBUILT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/${TARGET_PLATFORM}")
 set(QT_INSTALL_DIR "${PREBUILT_DIR}/qt6")
 set(QT_STAMP_FILE "${PREBUILT_DIR}/.qt-stamp")
+set(JSON_INSTALL_DIR "${PREBUILT_DIR}/json")
+set(JSON_STAMP_FILE "${PREBUILT_DIR}/.json-stamp")
 set(CURL_INSTALL_DIR "${PREBUILT_DIR}/curl")
 set(CURL_STAMP_FILE "${PREBUILT_DIR}/.curl-stamp")
 set(GLOG_INSTALL_DIR "${PREBUILT_DIR}/glog")
@@ -384,6 +386,37 @@ else()
 endif()
 
 #######################################
+# nlohmann_json (header-only)
+#######################################
+if(NOT EXISTS "${JSON_STAMP_FILE}")
+    message(STATUS "Downloading nlohmann_json...")
+    ExternalProject_Add(json_external
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES ""
+
+        PREFIX ${PREBUILT_DIR}/json-build
+        SOURCE_DIR ${PREBUILT_DIR}/json-src
+        BINARY_DIR ${PREBUILT_DIR}/json-build
+        INSTALL_DIR ${JSON_INSTALL_DIR}
+
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ""
+        INSTALL_COMMAND ${CMAKE_COMMAND} -E make_directory ${JSON_INSTALL_DIR}/include
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${PREBUILT_DIR}/json-src/include
+            ${JSON_INSTALL_DIR}/include
+        COMMAND ${CMAKE_COMMAND} -E touch ${JSON_STAMP_FILE}
+    )
+
+    set(JSON_DEPENDENCY json_external)
+else()
+    message(STATUS "Using cached nlohmann_json from ${JSON_INSTALL_DIR}")
+    set(JSON_DEPENDENCY "")
+endif()
+
+#######################################
 # OpenSSL (static library for HTTPS)
 #######################################
 set(OPENSSL_INSTALL_DIR "${PREBUILT_DIR}/openssl")
@@ -613,6 +646,9 @@ endif()
 if(FONTS_DEPENDENCY)
     add_dependencies(deps ${FONTS_DEPENDENCY})
 endif()
+if(JSON_DEPENDENCY)
+    add_dependencies(deps ${JSON_DEPENDENCY})
+endif()
 if(OPENSSL_DEPENDENCY)
     add_dependencies(deps ${OPENSSL_DEPENDENCY})
 endif()
@@ -632,6 +668,7 @@ set(APP_CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/install
     -DPREBUILT_DIR=${PREBUILT_DIR}
     -DTARGET_PLATFORM=${TARGET_PLATFORM}
+    -DJSON_ROOT=${JSON_INSTALL_DIR}
     -DCURL_ROOT=${CURL_INSTALL_DIR}
     -DOPENSSL_ROOT=${OPENSSL_INSTALL_DIR}
     -Dglog_ROOT=${GLOG_INSTALL_DIR}
@@ -656,7 +693,7 @@ ExternalProject_Add(rick_and_morty_viewer
     BUILD_COMMAND cmake --build <BINARY_DIR> --parallel ${NPROC}
     INSTALL_COMMAND ""
 
-    DEPENDS ${QT_DEPENDENCY} ${FONTS_DEPENDENCY} ${CURL_DEPENDENCY} ${GLOG_DEPENDENCY}
+    DEPENDS ${QT_DEPENDENCY} ${FONTS_DEPENDENCY} ${JSON_DEPENDENCY} ${CURL_DEPENDENCY} ${GLOG_DEPENDENCY}
 )
 
 #######################################
@@ -691,15 +728,15 @@ add_custom_target(distribute
         ${QT_INSTALL_DIR}/qml
         ${DIST_DIR}/qml
 
-    # Copy fonts to lib/fonts (where Qt looks for them)
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${DIST_DIR}/lib/fonts
+    # Copy fonts and fontconfig configuration
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${DIST_DIR}/share/fonts
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${FONTS_DIR}
-        ${DIST_DIR}/lib/fonts
-    # Copy fontconfig configuration
+        ${DIST_DIR}/share/fonts
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${DIST_DIR}/etc/fonts
     COMMAND ${CMAKE_COMMAND} -E copy
         ${CMAKE_SOURCE_DIR}/cmake/fonts.conf
-        ${DIST_DIR}/lib/fonts/fonts.conf
+        ${DIST_DIR}/etc/fonts/fonts.conf
 
     COMMENT "Creating distribution in ${DIST_DIR}"
 )
@@ -786,6 +823,16 @@ if(TARGET_OS STREQUAL "linux")
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${DIST_DIR}/qml
             ${DIST_DIR}/AppDir/usr/qml
+
+        # Copy fonts and fontconfig config
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${DIST_DIR}/AppDir/usr/share/fonts
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${DIST_DIR}/share/fonts
+            ${DIST_DIR}/AppDir/usr/share/fonts
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${DIST_DIR}/AppDir/usr/etc/fonts
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${DIST_DIR}/etc/fonts
+            ${DIST_DIR}/AppDir/usr/etc/fonts
 
         # Copy AppImage assets
         COMMAND ${CMAKE_COMMAND} -E copy

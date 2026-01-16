@@ -15,6 +15,8 @@ fi
 
 GLIBC_DIR="${APPDIR}/usr/lib/glibc"
 mkdir -p "$GLIBC_DIR"
+APP_LIB_DIR="${APPDIR}/usr/lib"
+mkdir -p "$APP_LIB_DIR"
 
 echo "Bundling glibc for $ARCH into $GLIBC_DIR..."
 
@@ -40,13 +42,14 @@ if [ ! -d "$LIB_DIR" ] && [ ! -d "$LIB_DIR_ALT" ]; then
     exit 0
 fi
 
-copy_lib() {
+copy_lib_to() {
     local lib="$1"
+    local dest="$2"
     if [ -f "$LIB_DIR/$lib" ]; then
-        cp -L "$LIB_DIR/$lib" "$GLIBC_DIR/" 2>/dev/null || true
+        cp -L "$LIB_DIR/$lib" "$dest/" 2>/dev/null || true
         echo "Copied $lib"
     elif [ -f "$LIB_DIR_ALT/$lib" ]; then
-        cp -L "$LIB_DIR_ALT/$lib" "$GLIBC_DIR/" 2>/dev/null || true
+        cp -L "$LIB_DIR_ALT/$lib" "$dest/" 2>/dev/null || true
         echo "Copied $lib"
     fi
 }
@@ -63,7 +66,7 @@ fi
 GLIBC_LIBS="libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1"
 GLIBC_LIBS="$GLIBC_LIBS libresolv.so.2 libnss_dns.so.2 libnss_files.so.2"
 for lib in $GLIBC_LIBS; do
-    copy_lib "$lib"
+    copy_lib_to "$lib" "$GLIBC_DIR"
 done
 
 # Copy X11/xcb runtime dependencies for Qt's xcb plugin
@@ -73,7 +76,19 @@ X11_LIBS="$X11_LIBS libxcb-xfixes.so.0 libxcb-sync.so.1 libxcb-randr.so.0"
 X11_LIBS="$X11_LIBS libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-icccm.so.4"
 X11_LIBS="$X11_LIBS libxcb-render-util.so.0 libxcb-util.so.1 libxcb-cursor.so.0 libfontconfig.so.1"
 for lib in $X11_LIBS; do
-    copy_lib "$lib"
+    copy_lib_to "$lib" "$APP_LIB_DIR"
+done
+
+# Copy OpenSSL runtime libraries for Qt's TLS backend
+SSL_LIBS="libssl.so.1.1 libcrypto.so.1.1"
+for lib in $SSL_LIBS; do
+    copy_lib_to "$lib" "$APP_LIB_DIR"
+done
+
+# PCRE (Qt and other deps may use it)
+PCRE_LIBS="libpcre.so.3"
+for lib in $PCRE_LIBS; do
+    copy_lib_to "$lib" "$APP_LIB_DIR"
 done
 
 # Copy libstdc++ and libgcc_s (C++ runtime)

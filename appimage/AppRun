@@ -7,7 +7,9 @@ HERE=${SELF%/*}
 # Set up environment
 export QT_PLUGIN_PATH="${HERE}/usr/plugins"
 export QML2_IMPORT_PATH="${HERE}/usr/qml"
-export FONTCONFIG_FILE="${HERE}/usr/lib/fonts/fonts.conf"
+export FONTCONFIG_PATH="${HERE}/usr/etc/fonts"
+export FONTCONFIG_FILE="${HERE}/usr/etc/fonts/fonts.conf"
+export QT_QPA_FONTDIR="${HERE}/usr/share/fonts"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 
 # Use bundled glibc only when the host glibc is older than our build baseline.

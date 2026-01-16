@@ -76,6 +76,8 @@ RUN set -e; \
     libjpeg-dev \
     # SSL for curl
     libssl-dev \
+    libssl1.1 \
+    libpcre3 \
     # Input
     libinput-dev \
     libmtdev-dev \
@@ -109,6 +111,8 @@ RUN set -e; \
     libxdmcp6 \
     libglib2.0-0 \
     libfontconfig1 \
+    libssl1.1 \
+    libpcre3 \
     libc6-dev:${FOREIGN_ARCH} \
     libxcb1:${FOREIGN_ARCH} \
     libxcb-shm0:${FOREIGN_ARCH} \
@@ -130,11 +134,26 @@ RUN set -e; \
     libxdmcp6:${FOREIGN_ARCH} \
     libglib2.0-0:${FOREIGN_ARCH} \
     libfontconfig1:${FOREIGN_ARCH} \
+    libssl1.1:${FOREIGN_ARCH} \
+    libpcre3:${FOREIGN_ARCH} \
     && rm -rf /var/lib/apt/lists/*; \
     if [ "$ARCH" = "arm64" ]; then \
         ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc; \
         ln -sf /usr/bin/g++ /usr/bin/aarch64-linux-gnu-g++; \
     fi
+
+# Install a newer CMake than bullseye provides (required for Qt 6.6+)
+ARG CMAKE_VERSION=3.27.9
+RUN set -e; \
+    ARCH="$(uname -m)"; \
+    if [ "$ARCH" = "x86_64" ]; then CMAKE_ARCH="x86_64"; \
+    elif [ "$ARCH" = "aarch64" ]; then CMAKE_ARCH="aarch64"; \
+    else echo "Unsupported CMake arch: $ARCH"; exit 1; fi; \
+    curl -L -o /tmp/cmake.tar.gz \
+        "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${CMAKE_ARCH}.tar.gz"; \
+    tar -xzf /tmp/cmake.tar.gz -C /opt; \
+    ln -sf /opt/cmake-${CMAKE_VERSION}-linux-${CMAKE_ARCH}/bin/* /usr/local/bin/; \
+    rm /tmp/cmake.tar.gz
 
 # Download AppImage tools
 RUN ARCH=$(uname -m) && \

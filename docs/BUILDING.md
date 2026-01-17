@@ -201,6 +201,23 @@ cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64
 cmake --build .build/windows-x86_64
 ```
 
+## Qt MinGW Patch Notes
+
+We do not change Qt sources in-repo. During Windows cross-compilation (MinGW),
+we apply small, temporary compatibility patches from `cmake/patches/` at build
+time only. These patches are narrowly scoped, documented here, and do not
+affect MSVC builds.
+
+- `qt6-mingw-netlistmgr-compat.patch`: Uses the numeric value `0x4000` for
+  `NLM_INTERNET_CONNECTIVITY_WEBHIJACK` when MinGW headers do not define it.
+  This matches the Windows SDK constant and does not change runtime behavior.
+- `qt6-mingw-disable-d3d12.patch`: Disables the Direct3D 12 RHI backend for
+  MinGW builds (MSVC-only). This avoids missing D3D12 headers in MinGW while
+  keeping D3D11 support, which is what our releases rely on today.
+
+These patches are intended to be removed once upstream MinGW support covers the
+same cases.
+
 ### Qt Cross-Compilation
 
 Qt cross-compilation requires a **host Qt** installation first (for moc, rcc, uic tools):

@@ -119,6 +119,12 @@ jobs:
           echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: 240
 
+      - name: Ensure host Qt tools executable
+        run: |
+          if [[ -d ".lib-prebuilt/linux-x86_64/qt6/libexec" ]]; then
+            sudo chmod -R a+rx .lib-prebuilt/linux-x86_64/qt6/libexec
+          fi
+
       - name: Upload host Qt artifact
         uses: actions/upload-artifact@v4
         with:
@@ -253,6 +259,16 @@ jobs:
         with:
           name: host-qt-linux-x86_64
           path: .lib-prebuilt/linux-x86_64
+
+      - name: Ensure Qt tools executable
+        if: matrix.is_linux == true
+        run: |
+          if [[ -d ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec" ]]; then
+            sudo chmod -R a+rx ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec"
+          fi
+          if [[ -d ".lib-prebuilt/linux-x86_64/qt6/libexec" ]]; then
+            sudo chmod -R a+rx ".lib-prebuilt/linux-x86_64/qt6/libexec"
+          fi
 
       # ===== Step 1: Build Dependencies =====
       - name: Build ${{ matrix.platform }} dependencies

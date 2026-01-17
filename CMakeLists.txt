@@ -690,6 +690,21 @@ if(IS_CROSS_COMPILE)
     endif()
 endif()
 
+# When using cross-compiled Qt or prebuilt binaries, provide host Qt tools path.
+if(NOT DEFINED QT_HOST_PATH)
+    if(DEFINED ENV{QT_HOST_PATH})
+        set(QT_HOST_PATH "$ENV{QT_HOST_PATH}")
+    else()
+        set(HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/linux-x86_64/qt6")
+        if(EXISTS "${HOST_QT_DIR}")
+            set(QT_HOST_PATH "${HOST_QT_DIR}")
+        endif()
+    endif()
+endif()
+if(QT_HOST_PATH)
+    list(APPEND APP_CMAKE_ARGS -DQT_HOST_PATH=${QT_HOST_PATH})
+endif()
+
 ExternalProject_Add(rick_and_morty_viewer
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/src-project
     BINARY_DIR ${CMAKE_BINARY_DIR}/app-build

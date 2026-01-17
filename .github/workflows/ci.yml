@@ -28,6 +28,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -140,7 +145,7 @@ jobs:
 
           - platform: linux-arm64
             docker_platform: linux/arm64
-            needs_host_qt: false
+            needs_host_qt: true
             artifact_name: appimage-linux-arm64
             artifact_path: .distribute/RickAndMortyViewer-aarch64.AppImage
             is_linux: true
@@ -170,7 +175,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up QEMU
-        if: matrix.docker_platform == 'linux/arm64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64

@@ -17,9 +17,10 @@ RUN set -e; \
     fi; \
     dpkg --add-architecture "$FOREIGN_ARCH"; \
     if [ "$ARCH" = "amd64" ]; then \
-        CROSS_COMPILERS="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
+        CROSS_COMPILERS="gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
     else \
-        CROSS_COMPILERS="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu"; \
+        # x86_64 cross toolchain packages are not available in bullseye for arm64 hosts.
+        CROSS_COMPILERS=""; \
     fi; \
     apt-get update && apt-get install -y --no-install-recommends \
     # Build tools
@@ -34,7 +35,7 @@ RUN set -e; \
     curl \
     file \
     xz-utils \
-    # Linux cross-compilers (bidirectional arm64 <-> x86_64)
+    # Linux cross-compilers (arm64 on amd64 hosts)
     ${CROSS_COMPILERS} \
     # Windows x86_64 cross-compiler (MinGW)
     mingw-w64 \

@@ -132,6 +132,8 @@ RUN set -e; \
     libxcb-xinerama0:${FOREIGN_ARCH} \
     libxcb-xkb1:${FOREIGN_ARCH} \
     libxcb-cursor0:${FOREIGN_ARCH} \
+    libxkbcommon0:${FOREIGN_ARCH} \
+    libxkbcommon-x11-0:${FOREIGN_ARCH} \
     libx11-6:${FOREIGN_ARCH} \
     libxau6:${FOREIGN_ARCH} \
     libxdmcp6:${FOREIGN_ARCH} \

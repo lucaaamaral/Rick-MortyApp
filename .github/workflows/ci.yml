@@ -69,10 +69,34 @@ jobs:
             echo "cache-valid=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Download host prebuilt (fallback)
+        id: host-prebuilt
+        if: (steps.cache-host-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tmp=/tmp/lib-prebuilt-linux-x86_64.tar.xz
+          if gh release download v0.0.1 -p 'lib-prebuilt-linux-x86_64.tar.xz' -D /tmp; then
+            sudo rm -rf .lib-prebuilt/linux-x86_64
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            echo "deps-ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "No host prebuilt tar available; building from source."
+          fi
+
       - name: Build host Qt dependencies
         id: build-host
         if: steps.cache-host-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
+        # Skip rebuild if we successfully downloaded prebuilt deps.
+        env:
+          FORCE_REBUILD: ${{ inputs.force_rebuild_deps }}
         run: |
+          if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.host-prebuilt.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded host prebuilt deps"
+            exit 0
+          fi
           docker compose run --rm deps-linux-x86_64
           # Clean build artifacts to fit in cache (root-owned files from Docker)
           sudo rm -rf .lib-prebuilt/linux-x86_64/qt6-build
@@ -202,11 +226,35 @@ jobs:
             echo "cache-valid=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Download prebuilt (Linux fallback)
+        id: linux-prebuilt
+        if: matrix.is_linux == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          platform="${{ matrix.platform }}"
+          tmp="/tmp/lib-prebuilt-${platform}.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-${platform}.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/${platform}"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            echo "deps-ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "No prebuilt tar available for ${platform}; building from source."
+          fi
+
       # ===== Step 1: Build Dependencies =====
       - name: Build ${{ matrix.platform }} dependencies
         id: build-deps
         if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
+        env:
+          FORCE_REBUILD: ${{ inputs.force_rebuild_deps }}
         run: |
+          if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.linux-prebuilt.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded prebuilt deps"
+            exit 0
+          fi
           docker compose run --rm deps-${{ matrix.platform }}
           # Clean build artifacts (root-owned files from Docker)
           sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-build

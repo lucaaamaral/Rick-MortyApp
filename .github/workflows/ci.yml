@@ -142,7 +142,6 @@ jobs:
   build-test:
     needs: build-host-qt
     runs-on: ubuntu-latest
-    if: ${{ matrix.enabled }}
     strategy:
       fail-fast: false
       matrix:
@@ -189,19 +188,27 @@ jobs:
 
     steps:
       # ===== Setup =====
+      - name: Skip disabled matrix
+        if: matrix.enabled != true
+        run: echo "Matrix entry disabled; skipping."
+
       - uses: actions/checkout@v4
+        if: matrix.enabled == true
 
       - name: Set up QEMU
+        if: matrix.enabled == true
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
       - name: Set up Docker Buildx
+        if: matrix.enabled == true
         uses: docker/setup-buildx-action@v3
 
       # ===== Cache Platform Dependencies =====
       - name: Restore ${{ matrix.platform }} cache
         id: cache-restore
+        if: matrix.enabled == true
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -217,7 +224,7 @@ jobs:
 
       - name: Validate ${{ matrix.platform }} cache
         id: validate-cache
-        if: steps.cache-restore.outputs.cache-hit == 'true'
+        if: matrix.enabled == true && steps.cache-restore.outputs.cache-hit == 'true'
         run: |
           PLATFORM="${{ matrix.platform }}"
           ERRORS=0
@@ -241,7 +248,7 @@ jobs:
 
       - name: Download prebuilt (Linux fallback)
         id: linux-prebuilt
-        if: matrix.is_linux == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        if: matrix.enabled == true && matrix.is_linux == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -259,14 +266,14 @@ jobs:
 
       # ===== Restore Host Qt (for cross-compile targets) =====
       - name: Download host Qt artifact
-        if: matrix.needs_host_qt
+        if: matrix.enabled == true && matrix.needs_host_qt
         uses: actions/download-artifact@v4
         with:
           name: host-qt-linux-x86_64
           path: .lib-prebuilt/linux-x86_64
 
       - name: Ensure Qt tools executable
-        if: matrix.is_linux == true
+        if: matrix.enabled == true && matrix.is_linux == true
         run: |
           if [[ -d ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec" ]]; then
             sudo chmod -R a+rx ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec"
@@ -278,7 +285,7 @@ jobs:
       # ===== Step 1: Build Dependencies =====
       - name: Build ${{ matrix.platform }} dependencies
         id: build-deps
-        if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
+        if: matrix.enabled == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps)
         env:
           FORCE_REBUILD: ${{ inputs.force_rebuild_deps }}
         run: |
@@ -299,17 +306,20 @@ jobs:
 
       # ===== Step 2: Build Application =====
       - name: Build ${{ matrix.platform }} application
+        if: matrix.enabled == true
         run: docker compose run --rm app-${{ matrix.platform }}
         timeout-minutes: 60
 
       # ===== Step 3: Build Tests =====
       - name: Build ${{ matrix.platform }} tests
+        if: matrix.enabled == true
         run: docker compose run --rm test-build-${{ matrix.platform }}
         timeout-minutes: 30
 
       # ===== Step 4: Run Tests (GATE) =====
       - name: Run ${{ matrix.platform }} tests
         id: run-tests
+        if: matrix.enabled == true
         run: |
           mkdir -p test-results
           docker compose run --rm test-run-${{ matrix.platform }}
@@ -318,7 +328,7 @@ jobs:
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
-        if: always()
+        if: matrix.enabled == true && always()
         with:
           name: test-results-${{ matrix.platform }}
           path: test-results/*.xml
@@ -326,7 +336,7 @@ jobs:
 
       # ===== Step 5: Create Distribution (only if tests pass) =====
       - name: Create ${{ matrix.platform }} distribution
-        if: steps.run-tests.outputs.tests-passed == 'true'
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
         run: |
           docker compose run --rm distribute-${{ matrix.platform }}
           if [ "${{ matrix.is_linux }}" = "true" ]; then
@@ -338,7 +348,7 @@ jobs:
 
       # ===== Step 6: Upload Artifact =====
       - name: Upload ${{ matrix.platform }} artifact
-        if: steps.run-tests.outputs.tests-passed == 'true'
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
@@ -347,7 +357,7 @@ jobs:
 
       # ===== Step 7: Save Cache (only after tests pass AND deps were rebuilt) =====
       - name: Save ${{ matrix.platform }} cache
-        if: steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
+        if: matrix.enabled == true && steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -361,11 +371,11 @@ jobs:
           key: prebuilt-${{ matrix.platform }}-${{ hashFiles('.github/cache-inputs.txt', 'docker/Dockerfile') }}-v${{ env.CACHE_VERSION }}
 
       - name: Create prebuilt tarball (Linux)
-        if: steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
         run: docker compose run --rm prebuilt-${{ matrix.platform }}
 
       - name: Upload prebuilt tarball (Linux)
-        if: steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
         uses: actions/upload-artifact@v4
         with:
           name: prebuilt-${{ matrix.platform }}

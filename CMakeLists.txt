@@ -166,12 +166,17 @@ if(IS_CROSS_COMPILE)
     # Qt6 puts host tools in libexec/, not bin/
     set(HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/${HOST_PLATFORM}/qt6")
     if(NOT EXISTS "${HOST_QT_DIR}/libexec/moc")
-        message(FATAL_ERROR
-            "Cross-compiling requires host Qt built first.\n"
-            "Build for ${HOST_PLATFORM} before building for ${TARGET_PLATFORM}:\n"
-            "  cmake -B .build/${HOST_PLATFORM} -DTARGET_PLATFORM=${HOST_PLATFORM}\n"
-            "  cmake --build .build/${HOST_PLATFORM} --target qt6_external"
-        )
+        set(ALT_HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/linux-arm64/qt6")
+        if(EXISTS "${ALT_HOST_QT_DIR}/libexec/moc")
+            set(HOST_QT_DIR "${ALT_HOST_QT_DIR}")
+        else()
+            message(FATAL_ERROR
+                "Cross-compiling requires host Qt built first.\n"
+                "Build for ${HOST_PLATFORM} before building for ${TARGET_PLATFORM}:\n"
+                "  cmake -B .build/${HOST_PLATFORM} -DTARGET_PLATFORM=${HOST_PLATFORM}\n"
+                "  cmake --build .build/${HOST_PLATFORM} --target qt6_external"
+            )
+        endif()
     endif()
     message(STATUS "Using host Qt from: ${HOST_QT_DIR}")
 

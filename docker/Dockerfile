@@ -115,6 +115,7 @@ RUN set -e; \
     libfontconfig1 \
     libssl1.1 \
     libpcre3 \
+    libpcre2-16-0 \
     libc6-dev:${FOREIGN_ARCH} \
     libxcb1:${FOREIGN_ARCH} \
     libxcb-shm0:${FOREIGN_ARCH} \
@@ -142,6 +143,7 @@ RUN set -e; \
     libopengl-dev:${FOREIGN_ARCH} \
     libssl1.1:${FOREIGN_ARCH} \
     libpcre3:${FOREIGN_ARCH} \
+    libpcre2-16-0:${FOREIGN_ARCH} \
     && rm -rf /var/lib/apt/lists/*; \
     if [ "$ARCH" = "arm64" ]; then \
         ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc; \

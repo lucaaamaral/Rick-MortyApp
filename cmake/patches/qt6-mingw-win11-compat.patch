@@ -1,0 +1,63 @@
+--- a/src/plugins/platforms/windows/qwindowsintegration.cpp
++++ b/src/plugins/platforms/windows/qwindowsintegration.cpp
+@@ -647,7 +647,14 @@
+     // Persist, so we can re-apply it on setting changes and Explorer restart
+     m_applicationBadgeNumber = number;
+ 
+-    static const bool isWindows11 = QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows11;
++#if defined(__MINGW32__) || defined(__MINGW64__)
++    static const bool isWindows11 =
++            QOperatingSystemVersion::current() >=
++            QOperatingSystemVersion(QOperatingSystemVersion::Windows, 10, 0, 22000);
++#else
++    static const bool isWindows11 =
++            QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows11;
++#endif
+ 
+ #if QT_CONFIG(cpp_winrt)
+     // We prefer the native BadgeUpdater API, that allows us to set a number directly,
+--- a/src/gui/opengl/qopengl.cpp
++++ b/src/gui/opengl/qopengl.cpp
+@@ -196,8 +196,14 @@
+     static QVersionNumber hostKernelVersion() { return QVersionNumber::fromString(QSysInfo::kernelVersion()); }
+     static QString hostOsRelease() {
+ #ifdef Q_OS_WIN
++#if defined(__MINGW32__) || defined(__MINGW64__)
++        if (QOperatingSystemVersion::current() >=
++            QOperatingSystemVersion(QOperatingSystemVersion::Windows, 10, 0, 22000))
++            return u"11"_s;
++#else
+         if (QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows11)
+             return u"11"_s;
++#endif
+         return u"10"_s;
+ #else
+         return {};
+--- a/src/plugins/styles/windowsvista/qwindowsvistastyle.cpp
++++ b/src/plugins/styles/windowsvista/qwindowsvistastyle.cpp
+@@ -2945,6 +2945,15 @@
+ 
+                 d->drawBackground(theme);
+ 
++#if defined(__MINGW32__) || defined(__MINGW64__)
++                const bool isWindows11 =
++                        QOperatingSystemVersion::current() >=
++                        QOperatingSystemVersion(QOperatingSystemVersion::Windows, 10, 0, 22000);
++#else
++                const bool isWindows11 =
++                        QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows11;
++#endif
++
+                 if (menuitem->icon.isNull()) {
+                     checkRect = QRect(QPoint(0, 0), size.toSize());
+                     checkRect.moveCenter(theme.rect.center());
+@@ -2957,8 +2966,7 @@
+                     else
+                         theme.stateId = bullet ? MC_BULLETNORMAL: MC_CHECKMARKNORMAL;
+                     d->drawBackground(theme);
+-                } else if (QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows11
+-                           && !act) {
++                } else if (isWindows11 && !act) {
+                     painter->fillRect(checkRect, menuitem->palette.highlight().color().lighter(200));
+                 }
+             }

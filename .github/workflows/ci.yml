@@ -98,10 +98,12 @@ jobs:
             .lib-prebuilt/${{ matrix.platform }}/qt6
             .lib-prebuilt/${{ matrix.platform }}/curl
             .lib-prebuilt/${{ matrix.platform }}/glog
+            .lib-prebuilt/${{ matrix.platform }}/json
             .lib-prebuilt/${{ matrix.platform }}/fonts
             .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
             .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.json-stamp
           key: prebuilt-${{ matrix.platform }}-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
           restore-keys: |
             prebuilt-${{ matrix.platform }}-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
@@ -114,13 +116,13 @@ jobs:
         run: |
           PLATFORM="${{ matrix.platform }}"
           ERRORS=0
-          for stamp in .qt-stamp .curl-stamp .glog-stamp; do
+          for stamp in .qt-stamp .curl-stamp .glog-stamp .json-stamp; do
             if [[ ! -f ".lib-prebuilt/${PLATFORM}/${stamp}" ]]; then
               echo "::warning::Missing stamp: ${stamp}"
               ERRORS=$((ERRORS + 1))
             fi
           done
-          for dir in qt6 curl glog; do
+          for dir in qt6 curl glog json; do
             if [[ ! -d ".lib-prebuilt/${PLATFORM}/${dir}" ]]; then
               echo "::warning::Missing dir: ${dir}"
               ERRORS=$((ERRORS + 1))
@@ -195,6 +197,8 @@ jobs:
           sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-src
           sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-build
           sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-src
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/json-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/json-src
           echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: ${{ matrix.timeout_deps }}
 
@@ -258,10 +262,12 @@ jobs:
             .lib-prebuilt/${{ matrix.platform }}/qt6
             .lib-prebuilt/${{ matrix.platform }}/curl
             .lib-prebuilt/${{ matrix.platform }}/glog
+            .lib-prebuilt/${{ matrix.platform }}/json
             .lib-prebuilt/${{ matrix.platform }}/fonts
             .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
             .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.json-stamp
           key: prebuilt-${{ matrix.platform }}-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
 
       - name: Create prebuilt tarball (Linux)

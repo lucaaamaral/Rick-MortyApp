@@ -1,0 +1,20 @@
+# Cache key inputs for prebuilt dependencies
+# Changing any of these should invalidate the cache
+# This file is hashed as part of the cache key
+
+## Dependency Versions (from CMakeLists.txt)
+QT_VERSION=v6.6.2
+CURL_VERSION=curl-8_5_0
+GLOG_VERSION=v0.7.1
+OPENSSL_VERSION=openssl-3.2.0
+JSON_VERSION=v3.11.3
+
+## Build Environment
+DEBIAN_VERSION=bullseye
+CMAKE_MIN_VERSION=3.16
+
+## Qt Build Configuration
+QT_MODULES=qtbase,qtdeclarative,qtshadertools,qtsvg,qtwayland
+
+## Cache Schema Version (bump for incompatible changes)
+CACHE_SCHEMA=1

@@ -25,3 +25,9 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 # Windows-specific settings
 set(CMAKE_EXECUTABLE_SUFFIX ".exe")
 set(CMAKE_SHARED_LIBRARY_SUFFIX ".dll")
+
+# llvm-ar appends by default; replace to avoid duplicate members on repeat builds.
+set(CMAKE_C_ARCHIVE_CREATE "<CMAKE_AR> rcs <TARGET> <OBJECTS>")
+set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> rcs <TARGET> <OBJECTS>")
+set(CMAKE_C_ARCHIVE_FINISH "")
+set(CMAKE_CXX_ARCHIVE_FINISH "")

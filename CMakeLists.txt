@@ -254,6 +254,20 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         list(APPEND QT_CONFIGURE_CMD -- -G "${QT_GENERATOR}")
     endif()
 
+    set(QT_PATCH_COMMAND ${CMAKE_COMMAND} -E echo "No Qt patches needed")
+    if(TARGET_OS STREQUAL "windows")
+        set(QT_PATCH_FILES
+            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-disable-d3d12.patch"
+            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-netlistmgr-compat.patch"
+            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-win11-compat.patch"
+        )
+        string(JOIN " " QT_PATCH_LIST ${QT_PATCH_FILES})
+        set(QT_PATCH_COMMAND
+            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>/qtbase
+            /bin/sh -lc "set -e; for patch in ${QT_PATCH_LIST}; do if git apply --reverse --check \"$patch\" >/dev/null 2>&1; then echo \"Qt patch already applied: $patch\"; else git apply \"$patch\"; fi; done"
+        )
+    endif()
+
     ExternalProject_Add(qt6_external
         GIT_REPOSITORY https://code.qt.io/qt/qt5.git
         GIT_TAG v6.6.2
@@ -270,6 +284,8 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         # Includes qtwayland for Wayland display support
         UPDATE_COMMAND cd <SOURCE_DIR> &&
             git submodule update --init --depth 1 --single-branch -- qtbase qtdeclarative qtshadertools qtsvg qtwayland
+
+        PATCH_COMMAND ${QT_PATCH_COMMAND}
 
         CONFIGURE_COMMAND ${QT_CONFIGURE_CMD}
 

@@ -86,7 +86,13 @@ jobs:
             sudo rm -rf .lib-prebuilt/linux-x86_64
             mkdir -p .lib-prebuilt
             tar -C .lib-prebuilt -xJf "$tmp"
-            echo "deps-ready=true" >> $GITHUB_OUTPUT
+            if [[ -x ".lib-prebuilt/linux-x86_64/qt6/libexec/moc" && -d ".lib-prebuilt/linux-x86_64/qt6/lib/cmake/Qt6CoreTools" ]]; then
+              echo "deps-ready=true" >> $GITHUB_OUTPUT
+            else
+              echo "Host Qt tools missing from prebuilt; rebuilding Qt from source."
+              sudo rm -rf .lib-prebuilt/linux-x86_64/qt6
+              sudo rm -f .lib-prebuilt/linux-x86_64/.qt-stamp
+            fi
           else
             echo "No host prebuilt tar available; building from source."
           fi
@@ -136,7 +142,7 @@ jobs:
         include:
           - platform: linux-x86_64
             docker_platform: linux/amd64
-            needs_host_qt: false
+            needs_host_qt: true
             artifact_name: appimage-linux-x86_64
             artifact_path: .distribute/RickAndMortyViewer-x86_64.AppImage
             is_linux: true
@@ -181,14 +187,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      # ===== Restore Host Qt (for cross-compile targets) =====
-      - name: Download host Qt artifact
-        if: matrix.needs_host_qt
-        uses: actions/download-artifact@v4
-        with:
-          name: host-qt-linux-x86_64
-          path: .lib-prebuilt/linux-x86_64
 
       # ===== Cache Platform Dependencies =====
       - name: Restore ${{ matrix.platform }} cache
@@ -247,6 +245,14 @@ jobs:
           else
             echo "No prebuilt tar available for ${platform}; building from source."
           fi
+
+      # ===== Restore Host Qt (for cross-compile targets) =====
+      - name: Download host Qt artifact
+        if: matrix.needs_host_qt
+        uses: actions/download-artifact@v4
+        with:
+          name: host-qt-linux-x86_64
+          path: .lib-prebuilt/linux-x86_64
 
       # ===== Step 1: Build Dependencies =====
       - name: Build ${{ matrix.platform }} dependencies

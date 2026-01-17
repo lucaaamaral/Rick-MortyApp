@@ -48,8 +48,11 @@ jobs:
             .lib-prebuilt/linux-x86_64/.qt-stamp
             .lib-prebuilt/linux-x86_64/.curl-stamp
             .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ hashFiles('.github/cache-inputs.txt', 'docker/Dockerfile') }}-v${{ env.CACHE_VERSION }}
-          restore-keys: prebuilt-linux-x86_64-
+          key: prebuilt-linux-x86_64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: |
+            prebuilt-linux-x86_64-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+            prebuilt-linux-x86_64-master-
+            prebuilt-linux-x86_64-
 
       - name: Validate cache structure
         id: validate-cache
@@ -219,8 +222,11 @@ jobs:
             .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
             .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
-          key: prebuilt-${{ matrix.platform }}-${{ hashFiles('.github/cache-inputs.txt', 'docker/Dockerfile') }}-v${{ env.CACHE_VERSION }}
-          restore-keys: prebuilt-${{ matrix.platform }}-
+          key: prebuilt-${{ matrix.platform }}-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: |
+            prebuilt-${{ matrix.platform }}-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+            prebuilt-${{ matrix.platform }}-master-
+            prebuilt-${{ matrix.platform }}-
 
       - name: Validate ${{ matrix.platform }} cache
         id: validate-cache
@@ -368,7 +374,7 @@ jobs:
             .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
             .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
-          key: prebuilt-${{ matrix.platform }}-${{ hashFiles('.github/cache-inputs.txt', 'docker/Dockerfile') }}-v${{ env.CACHE_VERSION }}
+          key: prebuilt-${{ matrix.platform }}-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
 
       - name: Create prebuilt tarball (Linux)
         if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true

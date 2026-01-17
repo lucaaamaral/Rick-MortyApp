@@ -4,10 +4,10 @@
              const auto scopedVariantClear = qScopeGuard([&variant]() { VariantClear(&variant); });
  
              const wchar_t *versions[] = { L"NA_InternetConnectivityV6", L"NA_InternetConnectivityV4" };
-+#if defined(__MINGW32__) || defined(__MINGW64__)
-+            const auto webHijackFlag = 0x4000;
-+#else
++#if defined(_MSC_VER)
 +            const auto webHijackFlag = NLM_INTERNET_CONNECTIVITY_WEBHIJACK;
++#else
++            const auto webHijackFlag = 0x4000;
 +#endif
              for (const auto version : versions) {
                  hr = propertyBag->Read(version, &variant, nullptr);

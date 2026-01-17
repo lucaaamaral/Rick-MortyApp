@@ -211,9 +211,13 @@ affect MSVC builds.
 - `qt6-mingw-netlistmgr-compat.patch`: Uses the numeric value `0x4000` for
   `NLM_INTERNET_CONNECTIVITY_WEBHIJACK` when MinGW headers do not define it.
   This matches the Windows SDK constant and does not change runtime behavior.
-- `qt6-mingw-disable-d3d12.patch`: Disables the Direct3D 12 RHI backend for
-  MinGW builds (MSVC-only). This avoids missing D3D12 headers in MinGW while
-  keeping D3D11 support, which is what our releases rely on today.
+- `qt6-mingw-win11-compat.patch`: Replaces `QOperatingSystemVersion::Windows11`
+  with an explicit version check for MinGW, preserving behavior.
+
+For Direct3D headers, we use the MIT-licensed DirectX-Headers repository during
+MinGW cross-compiles. It is downloaded into `.lib-prebuilt/<platform>/directx-headers`
+and its `include/directx` path is added to the Qt configure environment so
+`d3d12.h` and `d3d12sdklayers.h` are available without bundling the Windows SDK.
 
 These patches are intended to be removed once upstream MinGW support covers the
 same cases.

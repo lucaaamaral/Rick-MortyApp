@@ -118,6 +118,7 @@ message(STATUS "Parallel jobs: ${NPROC}")
 #######################################
 set(QT_GENERATOR "Unix Makefiles")
 set(QT_CMAKE_EXTRA_ARGS "")
+set(DIRECTX_HEADERS_INCLUDE "")
 
 if(TARGET_OS STREQUAL "linux")
     set(LIB_EXTENSION "so")
@@ -150,14 +151,15 @@ if(TARGET_OS STREQUAL "linux")
     endif()
 elseif(TARGET_OS STREQUAL "windows")
     # MinGW cross-compilation for Windows
-    # Note: D3D12 RHI is disabled for MinGW builds due to ABI incompatibilities
-    # between MinGW and MSVC for DirectX headers. Qt will use D3D11 backend instead.
+    # DirectX-Headers are provided for D3D12 headers during cross-compilation.
     set(QT_PLATFORM_ARGS
         -platform win32-g++
         -no-opengl
     )
     set(LIB_EXTENSION "dll")
     set(EXE_EXTENSION ".exe")
+    set(DIRECTX_HEADERS_DIR "${PREBUILT_DIR}/directx-headers")
+    set(DIRECTX_HEADERS_INCLUDE "${DIRECTX_HEADERS_DIR}/include/directx")
 endif()
 
 # Cross-compilation setup
@@ -195,6 +197,32 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
     # Create prebuilt directory
     file(MAKE_DIRECTORY ${PREBUILT_DIR})
 
+    set(DIRECTX_HEADERS_DEP "")
+    if(TARGET_OS STREQUAL "windows")
+        set(DIRECTX_HEADERS_STAMP "${PREBUILT_DIR}/.directx-headers-stamp")
+        if(NOT EXISTS "${DIRECTX_HEADERS_STAMP}")
+            ExternalProject_Add(directx_headers_external
+                GIT_REPOSITORY https://github.com/microsoft/DirectX-Headers.git
+                GIT_TAG v1.618.2
+                GIT_SHALLOW TRUE
+                GIT_PROGRESS TRUE
+
+                SOURCE_DIR ${PREBUILT_DIR}/directx-headers-src
+
+                CONFIGURE_COMMAND ""
+                BUILD_COMMAND ""
+                INSTALL_COMMAND
+                    ${CMAKE_COMMAND} -E make_directory ${DIRECTX_HEADERS_DIR}
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory <SOURCE_DIR>/include ${DIRECTX_HEADERS_DIR}/include
+                    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/LICENSE ${DIRECTX_HEADERS_DIR}/LICENSE
+                    COMMAND ${CMAKE_COMMAND} -E touch ${DIRECTX_HEADERS_STAMP}
+
+                USES_TERMINAL_DOWNLOAD TRUE
+            )
+            set(DIRECTX_HEADERS_DEP directx_headers_external)
+        endif()
+    endif()
+
     # Build Qt configure command
     set(QT_CONFIGURE_CMD
         <SOURCE_DIR>/configure
@@ -215,6 +243,7 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         ${QT_PLATFORM_ARGS}
     )
 
+    set(QT_ENV_VARS "")
     if(IS_CROSS_COMPILE AND TARGET_OS STREQUAL "linux")
         set(SYSROOT_DIR "/")
         if(TARGET_PLATFORM STREQUAL "linux-arm64")
@@ -227,11 +256,22 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
             -sysroot ${SYSROOT_DIR}
             -pkg-config
         )
-        list(PREPEND QT_CONFIGURE_CMD
-            ${CMAKE_COMMAND} -E env
+        list(APPEND QT_ENV_VARS
             PKG_CONFIG_PATH=${PKG_CONFIG_PATH}
             PKG_CONFIG_LIBDIR=${PKG_CONFIG_PATH}
             PKG_CONFIG_SYSROOT_DIR=${SYSROOT_DIR}
+        )
+    endif()
+    if(TARGET_OS STREQUAL "windows" AND DIRECTX_HEADERS_INCLUDE)
+        list(APPEND QT_ENV_VARS
+            CPLUS_INCLUDE_PATH=${DIRECTX_HEADERS_INCLUDE}
+            C_INCLUDE_PATH=${DIRECTX_HEADERS_INCLUDE}
+        )
+    endif()
+    if(QT_ENV_VARS)
+        list(PREPEND QT_CONFIGURE_CMD
+            ${CMAKE_COMMAND} -E env
+            ${QT_ENV_VARS}
         )
     endif()
 
@@ -257,7 +297,6 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
     set(QT_PATCH_COMMAND ${CMAKE_COMMAND} -E echo "No Qt patches needed")
     if(TARGET_OS STREQUAL "windows")
         set(QT_PATCH_FILES
-            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-disable-d3d12.patch"
             "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-netlistmgr-compat.patch"
             "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-win11-compat.patch"
         )
@@ -268,7 +307,13 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         )
     endif()
 
+    set(QT_DEPENDS_ARGS "")
+    if(DIRECTX_HEADERS_DEP)
+        set(QT_DEPENDS_ARGS DEPENDS ${DIRECTX_HEADERS_DEP})
+    endif()
+
     ExternalProject_Add(qt6_external
+        ${QT_DEPENDS_ARGS}
         GIT_REPOSITORY https://code.qt.io/qt/qt5.git
         GIT_TAG v6.6.2
         GIT_SHALLOW TRUE

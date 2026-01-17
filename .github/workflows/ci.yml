@@ -149,6 +149,21 @@ jobs:
             echo "No linux-arm64 prebuilt tar available for host tools."
           fi
 
+      - name: Download host tools (linux-x86_64)
+        if: matrix.enabled == true && matrix.is_linux == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          host_tmp="/tmp/lib-prebuilt-linux-x86_64.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-linux-x86_64.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/linux-x86_64"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$host_tmp"
+          else
+            echo "No linux-x86_64 prebuilt tar available for host tools."
+          fi
+
       - name: Download prebuilt (Linux fallback)
         id: linux-prebuilt
         if: matrix.enabled == true && matrix.is_linux == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps

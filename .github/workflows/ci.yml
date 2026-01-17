@@ -55,7 +55,7 @@ jobs:
             artifact_name: dist-windows-x86_64
             artifact_path: RickAndMortyViewer-windows-x86_64.zip
             is_linux: false
-            enabled: false
+            enabled: true
             timeout_deps: 240
             timeout_test: 30
 
@@ -65,7 +65,7 @@ jobs:
             artifact_name: dist-windows-arm64
             artifact_path: RickAndMortyViewer-windows-arm64.zip
             is_linux: false
-            enabled: false
+            enabled: true
             timeout_deps: 300
             timeout_test: 90
 
@@ -168,6 +168,25 @@ jobs:
           fi
           true
 
+      - name: Download prebuilt (Windows fallback)
+        id: windows-prebuilt
+        if: matrix.enabled == true && matrix.is_linux == false && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          platform="${{ matrix.platform }}"
+          tmp="/tmp/lib-prebuilt-${platform}.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-${platform}.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/${platform}"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            echo "deps-ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "No prebuilt tar available for ${platform}; building from source."
+          fi
+          true
+
       - name: Ensure Qt tools executable
         if: matrix.enabled == true && matrix.is_linux == true
         run: |
@@ -186,6 +205,10 @@ jobs:
           FORCE_REBUILD: ${{ inputs.force_rebuild_deps }}
         run: |
           if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.linux-prebuilt.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded prebuilt deps"
+            exit 0
+          fi
+          if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.windows-prebuilt.outputs.deps-ready }}" == "true" ]]; then
             echo "Using downloaded prebuilt deps"
             exit 0
           fi
@@ -270,12 +293,12 @@ jobs:
             .lib-prebuilt/${{ matrix.platform }}/.json-stamp
           key: prebuilt-${{ matrix.platform }}-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
 
-      - name: Create prebuilt tarball (Linux)
-        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
+      - name: Create prebuilt tarball
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
         run: docker compose run --rm prebuilt-${{ matrix.platform }}
 
-      - name: Upload prebuilt tarball (Linux)
-        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
+      - name: Upload prebuilt tarball
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: prebuilt-${{ matrix.platform }}
@@ -300,9 +323,15 @@ jobs:
       - name: Verify all platforms built
         run: |
           MISSING=0
-          for platform in linux-x86_64 linux-arm64; do
+          for platform in linux-x86_64 linux-arm64 windows-x86_64 windows-arm64; do
             if [[ ! -f "artifacts/prebuilt-${platform}/lib-prebuilt-${platform}.tar.xz" ]]; then
               echo "::error::Missing artifact for ${platform}"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          for platform in windows-x86_64 windows-arm64; do
+            if [[ ! -f "artifacts/dist-${platform}/RickAndMortyViewer-${platform}.zip" ]]; then
+              echo "::error::Missing Windows dist artifact for ${platform}"
               MISSING=$((MISSING + 1))
             fi
           done
@@ -310,7 +339,7 @@ jobs:
             echo "::error::Cannot release - ${MISSING} platform(s) failed"
             exit 1
           fi
-          echo "All 4 platforms built successfully"
+          echo "All platforms built successfully"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -320,5 +349,9 @@ jobs:
           files: |
             artifacts/appimage-linux-x86_64/RickAndMortyViewer-x86_64.AppImage
             artifacts/appimage-linux-arm64/RickAndMortyViewer-aarch64.AppImage
+            artifacts/dist-windows-x86_64/RickAndMortyViewer-windows-x86_64.zip
+            artifacts/dist-windows-arm64/RickAndMortyViewer-windows-arm64.zip
             artifacts/prebuilt-linux-x86_64/lib-prebuilt-linux-x86_64.tar.xz
             artifacts/prebuilt-linux-arm64/lib-prebuilt-linux-arm64.tar.xz
+            artifacts/prebuilt-windows-x86_64/lib-prebuilt-windows-x86_64.tar.xz
+            artifacts/prebuilt-windows-arm64/lib-prebuilt-windows-arm64.tar.xz

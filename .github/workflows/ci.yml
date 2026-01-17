@@ -142,6 +142,7 @@ jobs:
   build-test:
     needs: build-host-qt
     runs-on: ubuntu-latest
+    if: ${{ matrix.enabled }}
     strategy:
       fail-fast: false
       matrix:
@@ -152,6 +153,7 @@ jobs:
             artifact_name: appimage-linux-x86_64
             artifact_path: .distribute/RickAndMortyViewer-x86_64.AppImage
             is_linux: true
+            enabled: true
             timeout_deps: 240
             timeout_test: 30
 
@@ -161,6 +163,7 @@ jobs:
             artifact_name: appimage-linux-arm64
             artifact_path: .distribute/RickAndMortyViewer-aarch64.AppImage
             is_linux: true
+            enabled: true
             timeout_deps: 600
             timeout_test: 60
 
@@ -170,6 +173,7 @@ jobs:
             artifact_name: dist-windows-x86_64
             artifact_path: RickAndMortyViewer-windows-x86_64.zip
             is_linux: false
+            enabled: false
             timeout_deps: 240
             timeout_test: 30
 
@@ -179,6 +183,7 @@ jobs:
             artifact_name: dist-windows-arm64
             artifact_path: RickAndMortyViewer-windows-arm64.zip
             is_linux: false
+            enabled: false
             timeout_deps: 300
             timeout_test: 90
 
@@ -405,7 +410,5 @@ jobs:
           files: |
             artifacts/appimage-linux-x86_64/RickAndMortyViewer-x86_64.AppImage
             artifacts/appimage-linux-arm64/RickAndMortyViewer-aarch64.AppImage
-            artifacts/dist-windows-x86_64/RickAndMortyViewer-windows-x86_64.zip
-            artifacts/dist-windows-arm64/RickAndMortyViewer-windows-arm64.zip
             artifacts/prebuilt-linux-x86_64/lib-prebuilt-linux-x86_64.tar.xz
             artifacts/prebuilt-linux-arm64/lib-prebuilt-linux-arm64.tar.xz

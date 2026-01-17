@@ -117,6 +117,7 @@ message(STATUS "Parallel jobs: ${NPROC}")
 # Platform-specific Qt Configuration
 #######################################
 set(QT_GENERATOR "Unix Makefiles")
+set(QT_CMAKE_EXTRA_ARGS "")
 
 if(TARGET_OS STREQUAL "linux")
     set(LIB_EXTENSION "so")
@@ -148,6 +149,9 @@ if(TARGET_OS STREQUAL "linux")
         )
     endif()
 elseif(TARGET_OS STREQUAL "windows")
+    # MinGW cross-compilation for Windows
+    # Note: D3D12 RHI is disabled for MinGW builds due to ABI incompatibilities
+    # between MinGW and MSVC for DirectX headers. Qt will use D3D11 backend instead.
     set(QT_PLATFORM_ARGS
         -platform win32-g++
         -no-opengl
@@ -239,6 +243,7 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
             -DCMAKE_TOOLCHAIN_FILE=${CROSS_TOOLCHAIN_FILE}
             -DCMAKE_C_COMPILER_WORKS=TRUE
             -DCMAKE_CXX_COMPILER_WORKS=TRUE
+            ${QT_CMAKE_EXTRA_ARGS}
         )
     else()
         list(APPEND QT_CONFIGURE_CMD -- -G "${QT_GENERATOR}")
@@ -518,8 +523,8 @@ if(NOT EXISTS "${CURL_STAMP_FILE}")
             )
         elseif(TARGET_PLATFORM STREQUAL "windows-x86_64")
             set(CURL_CROSS_ARGS
-                -DCMAKE_C_COMPILER=/usr/bin/x86_64-w64-mingw32-gcc
-                -DCMAKE_CXX_COMPILER=/usr/bin/x86_64-w64-mingw32-g++
+                -DCMAKE_C_COMPILER=/usr/bin/x86_64-w64-mingw32-gcc-posix
+                -DCMAKE_CXX_COMPILER=/usr/bin/x86_64-w64-mingw32-g++-posix
                 -DCMAKE_SYSTEM_NAME=Windows
             )
         elseif(TARGET_PLATFORM STREQUAL "windows-arm64")
@@ -591,8 +596,8 @@ if(NOT EXISTS "${GLOG_STAMP_FILE}")
             )
         elseif(TARGET_PLATFORM STREQUAL "windows-x86_64")
             set(GLOG_CROSS_ARGS
-                -DCMAKE_C_COMPILER=/usr/bin/x86_64-w64-mingw32-gcc
-                -DCMAKE_CXX_COMPILER=/usr/bin/x86_64-w64-mingw32-g++
+                -DCMAKE_C_COMPILER=/usr/bin/x86_64-w64-mingw32-gcc-posix
+                -DCMAKE_CXX_COMPILER=/usr/bin/x86_64-w64-mingw32-g++-posix
                 -DCMAKE_SYSTEM_NAME=Windows
             )
         elseif(TARGET_PLATFORM STREQUAL "windows-arm64")
@@ -621,6 +626,8 @@ if(NOT EXISTS "${GLOG_STAMP_FILE}")
             -DWITH_GFLAGS=OFF
             -DWITH_GTEST=OFF
             -DWITH_UNWIND=OFF
+            -DTHREADS_PREFER_PTHREAD_FLAG=ON
+            -DCMAKE_EXE_LINKER_FLAGS=-pthread
             ${GLOG_CROSS_ARGS}
 
         BUILD_COMMAND cmake --build <BINARY_DIR> --parallel ${NPROC}

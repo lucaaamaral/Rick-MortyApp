@@ -499,3 +499,63 @@ services:
           exit 1;
         fi
       "
+
+  #######################################
+  # Prebuilt packaging services
+  #######################################
+
+  prebuilt-linux-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        ARCH=linux-x86_64;
+        SRC=/workspace/.lib-prebuilt/$$ARCH;
+        OUT=/workspace/.lib-prebuilt;
+        TMP_BASE=/tmp/prebuilt-tmp;
+        TMP=$$TMP_BASE/$$ARCH;
+        if [ ! -d \"$$SRC\" ]; then
+          echo \"Missing $$SRC\"; exit 1;
+        fi
+        rm -rf \"$$TMP\";
+        mkdir -p \"$$TMP\" \"$$OUT\";
+        cp -a \"$$SRC/.\" \"$$TMP/\";
+        find \"$$TMP\" -type d \\( -name '*-build' -o -name '*-src' \\) -prune -exec rm -rf {} +;
+        find \"$$TMP\" -type d \\( -path '*/share/doc' -o -path '*/share/man' -o -path '*/share/qt6/doc' -o -path '*/share/qt6/examples' -o -path '*/share/qt6/translations' \\) -prune -exec rm -rf {} +;
+        tar -C \"$$TMP_BASE\" -cJvf \"$$OUT/lib-prebuilt-$$ARCH.tar.xz\" \"$$ARCH\";
+        rm -rf \"$$TMP\";
+        echo \"Wrote $$OUT/lib-prebuilt-$$ARCH.tar.xz\";
+      "
+
+  prebuilt-linux-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        ARCH=linux-arm64;
+        SRC=/workspace/.lib-prebuilt/$$ARCH;
+        OUT=/workspace/.lib-prebuilt;
+        TMP_BASE=/tmp/prebuilt-tmp;
+        TMP=$$TMP_BASE/$$ARCH;
+        if [ ! -d \"$$SRC\" ]; then
+          echo \"Missing $$SRC\"; exit 1;
+        fi
+        rm -rf \"$$TMP\";
+        mkdir -p \"$$TMP\" \"$$OUT\";
+        cp -a \"$$SRC/.\" \"$$TMP/\";
+        find \"$$TMP\" -type d \\( -name '*-build' -o -name '*-src' \\) -prune -exec rm -rf {} +;
+        find \"$$TMP\" -type d \\( -path '*/share/doc' -o -path '*/share/man' -o -path '*/share/qt6/doc' -o -path '*/share/qt6/examples' -o -path '*/share/qt6/translations' \\) -prune -exec rm -rf {} +;
+        tar -C \"$$TMP_BASE\" -cJvf \"$$OUT/lib-prebuilt-$$ARCH.tar.xz\" \"$$ARCH\";
+        rm -rf \"$$TMP\";
+        echo \"Wrote $$OUT/lib-prebuilt-$$ARCH.tar.xz\";
+      "

@@ -20,10 +20,9 @@ env:
 
 jobs:
   # =============================================
-  # Phase 2: Build, Test, Distribute for ALL platforms
-  # Uses matrix strategy with IDENTICAL steps
+  # Phase 2: Build, Test, Distribute for Linux platforms
   # =============================================
-  build-test:
+  build-linux:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -49,6 +48,219 @@ jobs:
             timeout_deps: 600
             timeout_test: 60
 
+    steps:
+      # ===== Setup =====
+      - name: Skip disabled matrix
+        if: matrix.enabled != true
+        run: echo "Matrix entry disabled; skipping."
+
+      - uses: actions/checkout@v4
+        if: matrix.enabled == true
+
+      - name: Set up QEMU
+        if: matrix.enabled == true
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        if: matrix.enabled == true
+        uses: docker/setup-buildx-action@v3
+
+      # ===== Cache Platform Dependencies =====
+      - name: Restore ${{ matrix.platform }} cache
+        id: cache-restore
+        if: matrix.enabled == true
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .lib-prebuilt/${{ matrix.platform }}/qt6
+            .lib-prebuilt/${{ matrix.platform }}/curl
+            .lib-prebuilt/${{ matrix.platform }}/glog
+            .lib-prebuilt/${{ matrix.platform }}/json
+            .lib-prebuilt/${{ matrix.platform }}/fonts
+            .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.json-stamp
+          key: prebuilt-${{ matrix.platform }}-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: |
+            prebuilt-${{ matrix.platform }}-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+            prebuilt-${{ matrix.platform }}-master-
+            prebuilt-${{ matrix.platform }}-
+
+      - name: Validate ${{ matrix.platform }} cache
+        id: validate-cache
+        if: matrix.enabled == true && steps.cache-restore.outputs.cache-hit == 'true'
+        run: |
+          PLATFORM="${{ matrix.platform }}"
+          ERRORS=0
+          for stamp in .qt-stamp .curl-stamp .glog-stamp .json-stamp; do
+            if [[ ! -f ".lib-prebuilt/${PLATFORM}/${stamp}" ]]; then
+              echo "::warning::Missing stamp: ${stamp}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          for dir in qt6 curl glog json; do
+            if [[ ! -d ".lib-prebuilt/${PLATFORM}/${dir}" ]]; then
+              echo "::warning::Missing dir: ${dir}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "cache-valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "cache-valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download prebuilt (Linux fallback)
+        id: linux-prebuilt
+        if: matrix.enabled == true && matrix.is_linux == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          platform="${{ matrix.platform }}"
+          tmp="/tmp/lib-prebuilt-${platform}.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-${platform}.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/${platform}"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            echo "deps-ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "No prebuilt tar available for ${platform}; building from source."
+          fi
+          true
+
+      - name: Ensure Qt tools executable
+        if: matrix.enabled == true && matrix.is_linux == true
+        run: |
+          if [[ -d ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec" ]]; then
+            sudo chmod -R a+rx ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec"
+          fi
+
+      # ===== Step 1: Build Dependencies =====
+      - name: Build ${{ matrix.platform }} dependencies
+        id: build-deps
+        if: matrix.enabled == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps)
+        env:
+          FORCE_REBUILD: ${{ inputs.force_rebuild_deps }}
+        run: |
+          if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.linux-prebuilt.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded prebuilt deps"
+            exit 0
+          fi
+          docker compose run --rm deps-${{ matrix.platform }}
+          # Clean build artifacts (root-owned files from Docker)
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-src
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-src
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-src
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/json-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/json-src
+          echo "deps-built=true" >> $GITHUB_OUTPUT
+        timeout-minutes: ${{ matrix.timeout_deps }}
+
+      - name: Upload host Qt (linux-x86_64)
+        if: matrix.enabled == true && matrix.platform == 'linux-x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-qt-linux-x86_64
+          path: .lib-prebuilt/linux-x86_64/qt6
+          retention-days: 1
+
+      # ===== Step 2: Build Application =====
+      - name: Build ${{ matrix.platform }} application
+        if: matrix.enabled == true
+        run: docker compose run --rm app-${{ matrix.platform }}
+        timeout-minutes: 60
+
+      # ===== Step 3: Build Tests =====
+      - name: Build ${{ matrix.platform }} tests
+        if: matrix.enabled == true
+        run: docker compose run --rm test-build-${{ matrix.platform }}
+        timeout-minutes: 30
+
+      # ===== Step 4: Run Tests (GATE) =====
+      - name: Run ${{ matrix.platform }} tests
+        id: run-tests
+        if: matrix.enabled == true
+        run: |
+          mkdir -p test-results
+          docker compose run --rm test-run-${{ matrix.platform }}
+          echo "tests-passed=true" >> $GITHUB_OUTPUT
+        timeout-minutes: ${{ matrix.timeout_test }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: matrix.enabled == true && always()
+        with:
+          name: test-results-${{ matrix.platform }}
+          path: test-results/*.xml
+          retention-days: 30
+
+      # ===== Step 5: Create Distribution (only if tests pass) =====
+      - name: Create ${{ matrix.platform }} distribution
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
+        run: |
+          docker compose run --rm distribute-${{ matrix.platform }}
+          if [ "${{ matrix.is_linux }}" = "true" ]; then
+            docker compose run --rm appimage-${{ matrix.platform }}
+          else
+            docker compose run --rm package-${{ matrix.platform }}
+          fi
+
+      # ===== Step 6: Upload Artifact =====
+      - name: Upload ${{ matrix.platform }} artifact
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          retention-days: 30
+
+      # ===== Step 7: Save Cache (only after tests pass AND deps were rebuilt) =====
+      - name: Save ${{ matrix.platform }} cache
+        if: matrix.enabled == true && steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .lib-prebuilt/${{ matrix.platform }}/qt6
+            .lib-prebuilt/${{ matrix.platform }}/curl
+            .lib-prebuilt/${{ matrix.platform }}/glog
+            .lib-prebuilt/${{ matrix.platform }}/json
+            .lib-prebuilt/${{ matrix.platform }}/fonts
+            .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.json-stamp
+          key: prebuilt-${{ matrix.platform }}-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+
+      - name: Create prebuilt tarball
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
+        run: docker compose run --rm prebuilt-${{ matrix.platform }}
+
+      - name: Upload prebuilt tarball
+        if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.platform }}
+          path: .lib-prebuilt/lib-prebuilt-${{ matrix.platform }}.tar.xz
+          retention-days: 90
+
+  # =============================================
+  # Phase 2: Build, Test, Distribute for Windows platforms
+  # Requires host Qt from build-linux (linux-x86_64)
+  # =============================================
+  build-windows:
+    runs-on: ubuntu-latest
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
           - platform: windows-x86_64
             docker_platform: linux/amd64
             needs_host_qt: true
@@ -134,58 +346,23 @@ jobs:
             echo "cache-valid=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download host tools (linux-arm64)
-        if: matrix.enabled == true && matrix.platform == 'linux-x86_64'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          host_tmp="/tmp/lib-prebuilt-linux-arm64.tar.xz"
-          if gh release download v0.0.1 -p "lib-prebuilt-linux-arm64.tar.xz" -D /tmp; then
-            sudo rm -rf ".lib-prebuilt/linux-arm64"
-            mkdir -p .lib-prebuilt
-            tar -C .lib-prebuilt -xJf "$host_tmp"
-          else
-            echo "No linux-arm64 prebuilt tar available for host tools."
-          fi
+      - name: Download host Qt (linux-x86_64)
+        if: matrix.enabled == true
+        uses: actions/download-artifact@v4
+        with:
+          name: host-qt-linux-x86_64
+          path: .lib-prebuilt/linux-x86_64/qt6
 
-      - name: Download host tools (linux-x86_64)
-        if: matrix.enabled == true && matrix.is_linux == false
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Ensure host Qt tools executable
+        if: matrix.enabled == true
         run: |
-          set -euo pipefail
-          host_tmp="/tmp/lib-prebuilt-linux-x86_64.tar.xz"
-          if gh release download v0.0.1 -p "lib-prebuilt-linux-x86_64.tar.xz" -D /tmp; then
-            sudo rm -rf ".lib-prebuilt/linux-x86_64"
-            mkdir -p .lib-prebuilt
-            tar -C .lib-prebuilt -xJf "$host_tmp"
-          else
-            echo "No linux-x86_64 prebuilt tar available for host tools."
+          if [[ -d ".lib-prebuilt/linux-x86_64/qt6/libexec" ]]; then
+            sudo chmod -R a+rx ".lib-prebuilt/linux-x86_64/qt6/libexec"
           fi
-
-      - name: Download prebuilt (Linux fallback)
-        id: linux-prebuilt
-        if: matrix.enabled == true && matrix.is_linux == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          platform="${{ matrix.platform }}"
-          tmp="/tmp/lib-prebuilt-${platform}.tar.xz"
-          if gh release download v0.0.1 -p "lib-prebuilt-${platform}.tar.xz" -D /tmp; then
-            sudo rm -rf ".lib-prebuilt/${platform}"
-            mkdir -p .lib-prebuilt
-            tar -C .lib-prebuilt -xJf "$tmp"
-            echo "deps-ready=true" >> $GITHUB_OUTPUT
-          else
-            echo "No prebuilt tar available for ${platform}; building from source."
-          fi
-          true
 
       - name: Download prebuilt (Windows fallback)
         id: windows-prebuilt
-        if: matrix.enabled == true && matrix.is_linux == false && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        if: matrix.enabled == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -201,16 +378,6 @@ jobs:
             echo "No prebuilt tar available for ${platform}; building from source."
           fi
           true
-
-      - name: Ensure Qt tools executable
-        if: matrix.enabled == true && matrix.is_linux == true
-        run: |
-          if [[ -d ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec" ]]; then
-            sudo chmod -R a+rx ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec"
-          fi
-          if [[ -d ".lib-prebuilt/linux-arm64/qt6/libexec" ]]; then
-            sudo chmod -R a+rx ".lib-prebuilt/linux-arm64/qt6/libexec"
-          fi
 
       # ===== Step 1: Build Dependencies =====
       - name: Build ${{ matrix.platform }} dependencies
@@ -219,10 +386,6 @@ jobs:
         env:
           FORCE_REBUILD: ${{ inputs.force_rebuild_deps }}
         run: |
-          if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.linux-prebuilt.outputs.deps-ready }}" == "true" ]]; then
-            echo "Using downloaded prebuilt deps"
-            exit 0
-          fi
           if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.windows-prebuilt.outputs.deps-ready }}" == "true" ]]; then
             echo "Using downloaded prebuilt deps"
             exit 0
@@ -275,11 +438,7 @@ jobs:
         if: matrix.enabled == true && steps.run-tests.outputs.tests-passed == 'true'
         run: |
           docker compose run --rm distribute-${{ matrix.platform }}
-          if [ "${{ matrix.is_linux }}" = "true" ]; then
-            docker compose run --rm appimage-${{ matrix.platform }}
-          else
-            docker compose run --rm package-${{ matrix.platform }}
-          fi
+          docker compose run --rm package-${{ matrix.platform }}
 
       # ===== Step 6: Upload Artifact =====
       - name: Upload ${{ matrix.platform }} artifact
@@ -324,7 +483,7 @@ jobs:
   # =============================================
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-test
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

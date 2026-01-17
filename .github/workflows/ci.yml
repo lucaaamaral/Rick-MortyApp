@@ -107,6 +107,16 @@ jobs:
               ERRORS=$((ERRORS + 1))
             fi
           done
+          if [[ "${{ matrix.is_linux }}" == "true" ]]; then
+            if [[ ! -f ".lib-prebuilt/${PLATFORM}/qt6/lib/cmake/Qt6CoreTools/Qt6CoreToolsConfig.cmake" ]]; then
+              echo "::warning::Missing Qt6CoreTools config (host tools)"
+              ERRORS=$((ERRORS + 1))
+            fi
+            if [[ ! -x ".lib-prebuilt/${PLATFORM}/qt6/libexec/moc" ]]; then
+              echo "::warning::Missing Qt host tool: moc"
+              ERRORS=$((ERRORS + 1))
+            fi
+          fi
           if [[ $ERRORS -gt 0 ]]; then
             echo "cache-valid=false" >> $GITHUB_OUTPUT
           else
@@ -126,7 +136,13 @@ jobs:
             sudo rm -rf ".lib-prebuilt/${platform}"
             mkdir -p .lib-prebuilt
             tar -C .lib-prebuilt -xJf "$tmp"
-            echo "deps-ready=true" >> $GITHUB_OUTPUT
+            if [[ -f ".lib-prebuilt/${platform}/qt6/lib/cmake/Qt6CoreTools/Qt6CoreToolsConfig.cmake" && -x ".lib-prebuilt/${platform}/qt6/libexec/moc" ]]; then
+              echo "deps-ready=true" >> $GITHUB_OUTPUT
+            else
+              echo "::warning::Prebuilt Qt missing host tools; rebuilding from source."
+              sudo rm -rf ".lib-prebuilt/${platform}/qt6"
+              sudo rm -f ".lib-prebuilt/${platform}/.qt-stamp"
+            fi
           else
             echo "No prebuilt tar available for ${platform}; building from source."
           fi

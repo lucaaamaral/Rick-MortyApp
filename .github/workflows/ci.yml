@@ -1,9 +1,11 @@
-name: Build and Release
+name: Build, Test, and Release
 
 on:
   push:
     branches: [main, master]
     tags: ['v*']
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
     inputs:
       force_rebuild_deps:
@@ -14,12 +16,14 @@ on:
 env:
   DOCKER_BUILDKIT: 1
   COMPOSE_DOCKER_CLI_BUILD: 1
+  CACHE_VERSION: '1'
 
 jobs:
   # =============================================
-  # Linux x86_64 - Native build
+  # Phase 1: Build Host Qt (required for cross-compile)
+  # Windows targets need linux-x86_64 Qt for moc/rcc/qmlcachegen
   # =============================================
-  build-linux-x86_64:
+  build-host-qt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,9 +31,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache prebuilt dependencies
-        id: cache-deps
-        uses: actions/cache@v4
+      - name: Restore host Qt cache
+        id: cache-host-restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             .lib-prebuilt/linux-x86_64/qt6
@@ -39,11 +43,35 @@ jobs:
             .lib-prebuilt/linux-x86_64/.qt-stamp
             .lib-prebuilt/linux-x86_64/.curl-stamp
             .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
+          key: prebuilt-linux-x86_64-${{ hashFiles('.github/cache-inputs.txt', 'docker/Dockerfile') }}-v${{ env.CACHE_VERSION }}
           restore-keys: prebuilt-linux-x86_64-
 
-      - name: Build dependencies
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+      - name: Validate cache structure
+        id: validate-cache
+        if: steps.cache-host-restore.outputs.cache-hit == 'true'
+        run: |
+          ERRORS=0
+          for stamp in .qt-stamp .curl-stamp .glog-stamp; do
+            if [[ ! -f ".lib-prebuilt/linux-x86_64/${stamp}" ]]; then
+              echo "::warning::Missing stamp file: ${stamp}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          for dir in qt6 curl glog fonts; do
+            if [[ ! -d ".lib-prebuilt/linux-x86_64/${dir}" ]]; then
+              echo "::warning::Missing directory: ${dir}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "cache-valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "cache-valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build host Qt dependencies
+        id: build-host
+        if: steps.cache-host-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
         run: |
           docker compose run --rm deps-linux-x86_64
           # Clean build artifacts to fit in cache
@@ -53,42 +81,72 @@ jobs:
           rm -rf .lib-prebuilt/linux-x86_64/curl-src
           rm -rf .lib-prebuilt/linux-x86_64/glog-build
           rm -rf .lib-prebuilt/linux-x86_64/glog-src
+          echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: 240
 
-      - name: Build application and AppImage
-        run: |
-          docker compose run --rm app-linux-x86_64
-          docker compose run --rm distribute-linux-x86_64
-          docker compose run --rm appimage-linux-x86_64
-
-      - name: Upload AppImage
+      - name: Upload host Qt artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-linux-x86_64
-          path: .distribute/RickAndMortyViewer-x86_64.AppImage
-          retention-days: 30
-
-      - name: Create prebuilt tarball
-        run: |
-          cd .lib-prebuilt/linux-x86_64
-          tar -cJf ../../prebuilt-linux-x86_64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
-
-      - name: Upload prebuilt tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: prebuilt-linux-x86_64
-          path: prebuilt-linux-x86_64.tar.xz
-          retention-days: 90
+          name: host-qt-linux-x86_64
+          path: |
+            .lib-prebuilt/linux-x86_64/qt6
+            .lib-prebuilt/linux-x86_64/.qt-stamp
+          retention-days: 1
+          if-no-files-found: error
 
   # =============================================
-  # Linux ARM64 - QEMU emulation
+  # Phase 2: Build, Test, Distribute for ALL platforms
+  # Uses matrix strategy with IDENTICAL steps
   # =============================================
-  build-linux-arm64:
+  build-test:
+    needs: build-host-qt
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            docker_platform: linux/amd64
+            needs_host_qt: false
+            artifact_name: appimage-linux-x86_64
+            artifact_path: .distribute/RickAndMortyViewer-x86_64.AppImage
+            is_linux: true
+            timeout_deps: 240
+            timeout_test: 30
+
+          - platform: linux-arm64
+            docker_platform: linux/arm64
+            needs_host_qt: false
+            artifact_name: appimage-linux-arm64
+            artifact_path: .distribute/RickAndMortyViewer-aarch64.AppImage
+            is_linux: true
+            timeout_deps: 600
+            timeout_test: 60
+
+          - platform: windows-x86_64
+            docker_platform: linux/amd64
+            needs_host_qt: true
+            artifact_name: dist-windows-x86_64
+            artifact_path: RickAndMortyViewer-windows-x86_64.zip
+            is_linux: false
+            timeout_deps: 240
+            timeout_test: 30
+
+          - platform: windows-arm64
+            docker_platform: linux/arm64
+            needs_host_qt: true
+            artifact_name: dist-windows-arm64
+            artifact_path: RickAndMortyViewer-windows-arm64.zip
+            is_linux: false
+            timeout_deps: 300
+            timeout_test: 90
+
     steps:
+      # ===== Setup =====
       - uses: actions/checkout@v4
 
       - name: Set up QEMU
+        if: matrix.docker_platform == 'linux/arm64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
@@ -96,230 +154,151 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache prebuilt dependencies
-        id: cache-deps
-        uses: actions/cache@v4
+      # ===== Restore Host Qt (for cross-compile targets) =====
+      - name: Download host Qt artifact
+        if: matrix.needs_host_qt
+        uses: actions/download-artifact@v4
+        with:
+          name: host-qt-linux-x86_64
+          path: .lib-prebuilt/linux-x86_64
+
+      # ===== Cache Platform Dependencies =====
+      - name: Restore ${{ matrix.platform }} cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: |
-            .lib-prebuilt/linux-arm64/qt6
-            .lib-prebuilt/linux-arm64/curl
-            .lib-prebuilt/linux-arm64/glog
-            .lib-prebuilt/linux-arm64/fonts
-            .lib-prebuilt/linux-arm64/.qt-stamp
-            .lib-prebuilt/linux-arm64/.curl-stamp
-            .lib-prebuilt/linux-arm64/.glog-stamp
-          key: prebuilt-linux-arm64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          restore-keys: prebuilt-linux-arm64-
+            .lib-prebuilt/${{ matrix.platform }}/qt6
+            .lib-prebuilt/${{ matrix.platform }}/curl
+            .lib-prebuilt/${{ matrix.platform }}/glog
+            .lib-prebuilt/${{ matrix.platform }}/fonts
+            .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
+          key: prebuilt-${{ matrix.platform }}-${{ hashFiles('.github/cache-inputs.txt', 'docker/Dockerfile') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: prebuilt-${{ matrix.platform }}-
 
-      - name: Build dependencies
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+      - name: Validate ${{ matrix.platform }} cache
+        id: validate-cache
+        if: steps.cache-restore.outputs.cache-hit == 'true'
         run: |
-          docker compose run --rm deps-linux-arm64
-          rm -rf .lib-prebuilt/linux-arm64/qt6-build
-          rm -rf .lib-prebuilt/linux-arm64/qt6-src
-          rm -rf .lib-prebuilt/linux-arm64/curl-build
-          rm -rf .lib-prebuilt/linux-arm64/curl-src
-          rm -rf .lib-prebuilt/linux-arm64/glog-build
-          rm -rf .lib-prebuilt/linux-arm64/glog-src
-        timeout-minutes: 600
+          PLATFORM="${{ matrix.platform }}"
+          ERRORS=0
+          for stamp in .qt-stamp .curl-stamp .glog-stamp; do
+            if [[ ! -f ".lib-prebuilt/${PLATFORM}/${stamp}" ]]; then
+              echo "::warning::Missing stamp: ${stamp}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          for dir in qt6 curl glog; do
+            if [[ ! -d ".lib-prebuilt/${PLATFORM}/${dir}" ]]; then
+              echo "::warning::Missing dir: ${dir}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "cache-valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "cache-valid=true" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Build application and AppImage
+      # ===== Step 1: Build Dependencies =====
+      - name: Build ${{ matrix.platform }} dependencies
+        id: build-deps
+        if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
         run: |
-          docker compose run --rm app-linux-arm64
-          docker compose run --rm distribute-linux-arm64
-          docker compose run --rm appimage-linux-arm64
+          docker compose run --rm deps-${{ matrix.platform }}
+          # Clean build artifacts
+          rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-build
+          rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-src
+          rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-build
+          rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-src
+          rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-build
+          rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-src
+          echo "deps-built=true" >> $GITHUB_OUTPUT
+        timeout-minutes: ${{ matrix.timeout_deps }}
 
-      - name: Upload AppImage
+      # ===== Step 2: Build Application =====
+      - name: Build ${{ matrix.platform }} application
+        run: docker compose run --rm app-${{ matrix.platform }}
+        timeout-minutes: 60
+
+      # ===== Step 3: Build Tests =====
+      - name: Build ${{ matrix.platform }} tests
+        run: docker compose run --rm test-build-${{ matrix.platform }}
+        timeout-minutes: 30
+
+      # ===== Step 4: Run Tests (GATE) =====
+      - name: Run ${{ matrix.platform }} tests
+        id: run-tests
+        run: |
+          mkdir -p test-results
+          docker compose run --rm test-run-${{ matrix.platform }}
+          echo "tests-passed=true" >> $GITHUB_OUTPUT
+        timeout-minutes: ${{ matrix.timeout_test }}
+
+      - name: Upload test results
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: appimage-linux-arm64
-          path: .distribute/RickAndMortyViewer-aarch64.AppImage
+          name: test-results-${{ matrix.platform }}
+          path: test-results/*.xml
           retention-days: 30
 
-      - name: Create prebuilt tarball
+      # ===== Step 5: Create Distribution (only if tests pass) =====
+      - name: Create ${{ matrix.platform }} distribution
+        if: steps.run-tests.outputs.tests-passed == 'true'
         run: |
-          cd .lib-prebuilt/linux-arm64
-          tar -cJf ../../prebuilt-linux-arm64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+          docker compose run --rm distribute-${{ matrix.platform }}
+          if [ "${{ matrix.is_linux }}" = "true" ]; then
+            docker compose run --rm appimage-${{ matrix.platform }}
+          else
+            cd .distribute/${{ matrix.platform }}
+            zip -r ../../RickAndMortyViewer-${{ matrix.platform }}.zip .
+          fi
 
-      - name: Upload prebuilt tarball
+      # ===== Step 6: Upload Artifact =====
+      - name: Upload ${{ matrix.platform }} artifact
+        if: steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: prebuilt-linux-arm64
-          path: prebuilt-linux-arm64.tar.xz
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          retention-days: 30
+
+      # ===== Step 7: Save Cache (only after tests pass AND deps were rebuilt) =====
+      - name: Save ${{ matrix.platform }} cache
+        if: steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .lib-prebuilt/${{ matrix.platform }}/qt6
+            .lib-prebuilt/${{ matrix.platform }}/curl
+            .lib-prebuilt/${{ matrix.platform }}/glog
+            .lib-prebuilt/${{ matrix.platform }}/fonts
+            .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
+          key: prebuilt-${{ matrix.platform }}-${{ hashFiles('.github/cache-inputs.txt', 'docker/Dockerfile') }}-v${{ env.CACHE_VERSION }}
+
+      - name: Create prebuilt tarball (Linux)
+        if: steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
+        run: docker compose run --rm prebuilt-${{ matrix.platform }}
+
+      - name: Upload prebuilt tarball (Linux)
+        if: steps.run-tests.outputs.tests-passed == 'true' && matrix.is_linux == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.platform }}
+          path: .lib-prebuilt/lib-prebuilt-${{ matrix.platform }}.tar.xz
           retention-days: 90
 
   # =============================================
-  # Windows x86_64 - Cross-compile with MinGW
-  # Requires: Host Qt (linux-x86_64) built first
-  # =============================================
-  build-windows-x86_64:
-    runs-on: ubuntu-latest
-    needs: build-linux-x86_64
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore host Qt cache (required for cross-compile)
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lib-prebuilt/linux-x86_64/qt6
-            .lib-prebuilt/linux-x86_64/curl
-            .lib-prebuilt/linux-x86_64/glog
-            .lib-prebuilt/linux-x86_64/fonts
-            .lib-prebuilt/linux-x86_64/.qt-stamp
-            .lib-prebuilt/linux-x86_64/.curl-stamp
-            .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          fail-on-cache-miss: true
-
-      - name: Cache Windows x86_64 dependencies
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lib-prebuilt/windows-x86_64/qt6
-            .lib-prebuilt/windows-x86_64/curl
-            .lib-prebuilt/windows-x86_64/glog
-            .lib-prebuilt/windows-x86_64/fonts
-            .lib-prebuilt/windows-x86_64/.qt-stamp
-            .lib-prebuilt/windows-x86_64/.curl-stamp
-            .lib-prebuilt/windows-x86_64/.glog-stamp
-          key: prebuilt-windows-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          restore-keys: prebuilt-windows-x86_64-
-
-      - name: Build dependencies (cross-compile)
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
-        run: |
-          docker compose run --rm deps-windows-x86_64
-          rm -rf .lib-prebuilt/windows-x86_64/qt6-build
-          rm -rf .lib-prebuilt/windows-x86_64/qt6-src
-          rm -rf .lib-prebuilt/windows-x86_64/curl-build
-          rm -rf .lib-prebuilt/windows-x86_64/curl-src
-          rm -rf .lib-prebuilt/windows-x86_64/glog-build
-          rm -rf .lib-prebuilt/windows-x86_64/glog-src
-        timeout-minutes: 240
-
-      - name: Build application and distribution
-        run: |
-          docker compose run --rm app-windows-x86_64
-          docker compose run --rm distribute-windows-x86_64
-
-      - name: Create Windows zip
-        run: |
-          cd .distribute/windows-x86_64
-          zip -r ../../RickAndMortyViewer-windows-x86_64.zip .
-
-      - name: Upload Windows zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-windows-x86_64
-          path: RickAndMortyViewer-windows-x86_64.zip
-          retention-days: 30
-
-      - name: Create prebuilt tarball
-        run: |
-          cd .lib-prebuilt/windows-x86_64
-          tar -cJf ../../prebuilt-windows-x86_64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
-
-      - name: Upload prebuilt tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: prebuilt-windows-x86_64
-          path: prebuilt-windows-x86_64.tar.xz
-          retention-days: 90
-
-  # =============================================
-  # Windows ARM64 - Cross-compile with llvm-mingw
-  # Requires: Host Qt (linux-x86_64) built first
-  # =============================================
-  build-windows-arm64:
-    runs-on: ubuntu-latest
-    needs: build-linux-x86_64
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore host Qt cache (required for cross-compile)
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lib-prebuilt/linux-x86_64/qt6
-            .lib-prebuilt/linux-x86_64/curl
-            .lib-prebuilt/linux-x86_64/glog
-            .lib-prebuilt/linux-x86_64/fonts
-            .lib-prebuilt/linux-x86_64/.qt-stamp
-            .lib-prebuilt/linux-x86_64/.curl-stamp
-            .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          fail-on-cache-miss: true
-
-      - name: Cache Windows ARM64 dependencies
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lib-prebuilt/windows-arm64/qt6
-            .lib-prebuilt/windows-arm64/curl
-            .lib-prebuilt/windows-arm64/glog
-            .lib-prebuilt/windows-arm64/fonts
-            .lib-prebuilt/windows-arm64/.qt-stamp
-            .lib-prebuilt/windows-arm64/.curl-stamp
-            .lib-prebuilt/windows-arm64/.glog-stamp
-          key: prebuilt-windows-arm64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          restore-keys: prebuilt-windows-arm64-
-
-      - name: Build dependencies (cross-compile)
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
-        run: |
-          docker compose run --rm deps-windows-arm64
-          rm -rf .lib-prebuilt/windows-arm64/qt6-build
-          rm -rf .lib-prebuilt/windows-arm64/qt6-src
-          rm -rf .lib-prebuilt/windows-arm64/curl-build
-          rm -rf .lib-prebuilt/windows-arm64/curl-src
-          rm -rf .lib-prebuilt/windows-arm64/glog-build
-          rm -rf .lib-prebuilt/windows-arm64/glog-src
-        timeout-minutes: 300
-
-      - name: Build application and distribution
-        run: |
-          docker compose run --rm app-windows-arm64
-          docker compose run --rm distribute-windows-arm64
-
-      - name: Create Windows zip
-        run: |
-          cd .distribute/windows-arm64
-          zip -r ../../RickAndMortyViewer-windows-arm64.zip .
-
-      - name: Upload Windows zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-windows-arm64
-          path: RickAndMortyViewer-windows-arm64.zip
-          retention-days: 30
-
-      - name: Create prebuilt tarball
-        run: |
-          cd .lib-prebuilt/windows-arm64
-          tar -cJf ../../prebuilt-windows-arm64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
-
-      - name: Upload prebuilt tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: prebuilt-windows-arm64
-          path: prebuilt-windows-arm64.tar.xz
-          retention-days: 90
-
-  # =============================================
-  # Release - Create GitHub Release on tags
+  # Phase 3: Release (requires ALL platforms to pass)
   # =============================================
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x86_64, build-windows-arm64]
+    needs: build-test
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -328,6 +307,21 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Verify all platforms built
+        run: |
+          MISSING=0
+          for platform in linux-x86_64 linux-arm64; do
+            if [[ ! -f "artifacts/prebuilt-${platform}/lib-prebuilt-${platform}.tar.xz" ]]; then
+              echo "::error::Missing artifact for ${platform}"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [[ $MISSING -gt 0 ]]; then
+            echo "::error::Cannot release - ${MISSING} platform(s) failed"
+            exit 1
+          fi
+          echo "All 4 platforms built successfully"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -339,7 +333,5 @@ jobs:
             artifacts/appimage-linux-arm64/RickAndMortyViewer-aarch64.AppImage
             artifacts/dist-windows-x86_64/RickAndMortyViewer-windows-x86_64.zip
             artifacts/dist-windows-arm64/RickAndMortyViewer-windows-arm64.zip
-            artifacts/prebuilt-linux-x86_64/prebuilt-linux-x86_64.tar.xz
-            artifacts/prebuilt-linux-arm64/prebuilt-linux-arm64.tar.xz
-            artifacts/prebuilt-windows-x86_64/prebuilt-windows-x86_64.tar.xz
-            artifacts/prebuilt-windows-arm64/prebuilt-windows-arm64.tar.xz
+            artifacts/prebuilt-linux-x86_64/lib-prebuilt-linux-x86_64.tar.xz
+            artifacts/prebuilt-linux-arm64/lib-prebuilt-linux-arm64.tar.xz

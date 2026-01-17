@@ -74,13 +74,13 @@ jobs:
         if: steps.cache-host-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
         run: |
           docker compose run --rm deps-linux-x86_64
-          # Clean build artifacts to fit in cache
-          rm -rf .lib-prebuilt/linux-x86_64/qt6-build
-          rm -rf .lib-prebuilt/linux-x86_64/qt6-src
-          rm -rf .lib-prebuilt/linux-x86_64/curl-build
-          rm -rf .lib-prebuilt/linux-x86_64/curl-src
-          rm -rf .lib-prebuilt/linux-x86_64/glog-build
-          rm -rf .lib-prebuilt/linux-x86_64/glog-src
+          # Clean build artifacts to fit in cache (root-owned files from Docker)
+          sudo rm -rf .lib-prebuilt/linux-x86_64/qt6-build
+          sudo rm -rf .lib-prebuilt/linux-x86_64/qt6-src
+          sudo rm -rf .lib-prebuilt/linux-x86_64/curl-build
+          sudo rm -rf .lib-prebuilt/linux-x86_64/curl-src
+          sudo rm -rf .lib-prebuilt/linux-x86_64/glog-build
+          sudo rm -rf .lib-prebuilt/linux-x86_64/glog-src
           echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: 240
 
@@ -208,13 +208,13 @@ jobs:
         if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
         run: |
           docker compose run --rm deps-${{ matrix.platform }}
-          # Clean build artifacts
-          rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-build
-          rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-src
-          rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-build
-          rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-src
-          rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-build
-          rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-src
+          # Clean build artifacts (root-owned files from Docker)
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/qt6-src
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/curl-src
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-build
+          sudo rm -rf .lib-prebuilt/${{ matrix.platform }}/glog-src
           echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: ${{ matrix.timeout_deps }}
 

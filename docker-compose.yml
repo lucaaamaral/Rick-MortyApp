@@ -245,6 +245,20 @@ services:
         cmake --build .build/windows-x86_64 --target distribute
       "
 
+  package-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        cd /workspace/.distribute/windows-x86_64;
+        cmake -E tar cf ../RickAndMortyViewer-windows-x86_64.zip --format=zip .
+      "
+
   #######################################
   # Windows ARM64 cross-compilation (llvm-mingw)
   # Requires host Qt built first (linux-x86_64 or linux-arm64)
@@ -286,6 +300,20 @@ services:
     command: >
       bash -c "
         cmake --build .build/windows-arm64 --target distribute
+      "
+
+  package-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        cd /workspace/.distribute/windows-arm64;
+        cmake -E tar cf ../RickAndMortyViewer-windows-arm64.zip --format=zip .
       "
 
   #######################################

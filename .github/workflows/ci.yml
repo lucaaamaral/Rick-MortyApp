@@ -263,8 +263,7 @@ jobs:
           if [ "${{ matrix.is_linux }}" = "true" ]; then
             docker compose run --rm appimage-${{ matrix.platform }}
           else
-            cd .distribute/${{ matrix.platform }}
-            zip -r ../RickAndMortyViewer-${{ matrix.platform }}.zip .
+            docker compose run --rm package-${{ matrix.platform }}
           fi
 
       # ===== Step 6: Upload Artifact =====

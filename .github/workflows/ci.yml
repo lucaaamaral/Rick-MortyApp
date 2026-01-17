@@ -20,130 +20,10 @@ env:
 
 jobs:
   # =============================================
-  # Phase 1: Build Host Qt (required for cross-compile)
-  # Windows targets need linux-x86_64 Qt for moc/rcc/qmlcachegen
-  # =============================================
-  build-host-qt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore host Qt cache
-        id: cache-host-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            .lib-prebuilt/linux-x86_64/qt6
-            .lib-prebuilt/linux-x86_64/curl
-            .lib-prebuilt/linux-x86_64/glog
-            .lib-prebuilt/linux-x86_64/fonts
-            .lib-prebuilt/linux-x86_64/.qt-stamp
-            .lib-prebuilt/linux-x86_64/.curl-stamp
-            .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
-          restore-keys: |
-            prebuilt-linux-x86_64-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
-            prebuilt-linux-x86_64-master-
-            prebuilt-linux-x86_64-
-
-      - name: Validate cache structure
-        id: validate-cache
-        if: steps.cache-host-restore.outputs.cache-hit == 'true'
-        run: |
-          ERRORS=0
-          for stamp in .qt-stamp .curl-stamp .glog-stamp; do
-            if [[ ! -f ".lib-prebuilt/linux-x86_64/${stamp}" ]]; then
-              echo "::warning::Missing stamp file: ${stamp}"
-              ERRORS=$((ERRORS + 1))
-            fi
-          done
-          for dir in qt6 curl glog fonts; do
-            if [[ ! -d ".lib-prebuilt/linux-x86_64/${dir}" ]]; then
-              echo "::warning::Missing directory: ${dir}"
-              ERRORS=$((ERRORS + 1))
-            fi
-          done
-          if [[ $ERRORS -gt 0 ]]; then
-            echo "cache-valid=false" >> $GITHUB_OUTPUT
-          else
-            echo "cache-valid=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download host prebuilt (fallback)
-        id: host-prebuilt
-        if: (steps.cache-host-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tmp=/tmp/lib-prebuilt-linux-x86_64.tar.xz
-          if gh release download v0.0.1 -p 'lib-prebuilt-linux-x86_64.tar.xz' -D /tmp; then
-            sudo rm -rf .lib-prebuilt/linux-x86_64
-            mkdir -p .lib-prebuilt
-            tar -C .lib-prebuilt -xJf "$tmp"
-            if [[ -x ".lib-prebuilt/linux-x86_64/qt6/libexec/moc" && -d ".lib-prebuilt/linux-x86_64/qt6/lib/cmake/Qt6CoreTools" ]]; then
-              echo "deps-ready=true" >> $GITHUB_OUTPUT
-            else
-              echo "Host Qt tools missing from prebuilt; rebuilding Qt from source."
-              sudo rm -rf .lib-prebuilt/linux-x86_64/qt6
-              sudo rm -f .lib-prebuilt/linux-x86_64/.qt-stamp
-            fi
-          else
-            echo "No host prebuilt tar available; building from source."
-          fi
-
-      - name: Build host Qt dependencies
-        id: build-host
-        if: steps.cache-host-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
-        # Skip rebuild if we successfully downloaded prebuilt deps.
-        env:
-          FORCE_REBUILD: ${{ inputs.force_rebuild_deps }}
-        run: |
-          if [[ "${FORCE_REBUILD}" != "true" && "${{ steps.host-prebuilt.outputs.deps-ready }}" == "true" ]]; then
-            echo "Using downloaded host prebuilt deps"
-            exit 0
-          fi
-          docker compose run --rm deps-linux-x86_64
-          # Clean build artifacts to fit in cache (root-owned files from Docker)
-          sudo rm -rf .lib-prebuilt/linux-x86_64/qt6-build
-          sudo rm -rf .lib-prebuilt/linux-x86_64/qt6-src
-          sudo rm -rf .lib-prebuilt/linux-x86_64/curl-build
-          sudo rm -rf .lib-prebuilt/linux-x86_64/curl-src
-          sudo rm -rf .lib-prebuilt/linux-x86_64/glog-build
-          sudo rm -rf .lib-prebuilt/linux-x86_64/glog-src
-          echo "deps-built=true" >> $GITHUB_OUTPUT
-        timeout-minutes: 240
-
-      - name: Ensure host Qt tools executable
-        run: |
-          if [[ -d ".lib-prebuilt/linux-x86_64/qt6/libexec" ]]; then
-            sudo chmod -R a+rx .lib-prebuilt/linux-x86_64/qt6/libexec
-          fi
-
-      - name: Upload host Qt artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: host-qt-linux-x86_64
-          path: |
-            .lib-prebuilt/linux-x86_64/qt6
-            .lib-prebuilt/linux-x86_64/.qt-stamp
-          retention-days: 1
-          if-no-files-found: error
-
-  # =============================================
   # Phase 2: Build, Test, Distribute for ALL platforms
   # Uses matrix strategy with IDENTICAL steps
   # =============================================
   build-test:
-    needs: build-host-qt
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -252,6 +132,21 @@ jobs:
             echo "cache-valid=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Download host tools (linux-arm64)
+        if: matrix.enabled == true && matrix.platform == 'linux-x86_64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          host_tmp="/tmp/lib-prebuilt-linux-arm64.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-linux-arm64.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/linux-arm64"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$host_tmp"
+          else
+            echo "No linux-arm64 prebuilt tar available for host tools."
+          fi
+
       - name: Download prebuilt (Linux fallback)
         id: linux-prebuilt
         if: matrix.enabled == true && matrix.is_linux == true && (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
@@ -269,14 +164,7 @@ jobs:
           else
             echo "No prebuilt tar available for ${platform}; building from source."
           fi
-
-      # ===== Restore Host Qt (for cross-compile targets) =====
-      - name: Download host Qt artifact
-        if: matrix.enabled == true && matrix.needs_host_qt
-        uses: actions/download-artifact@v4
-        with:
-          name: host-qt-linux-x86_64
-          path: .lib-prebuilt/linux-x86_64
+          true
 
       - name: Ensure Qt tools executable
         if: matrix.enabled == true && matrix.is_linux == true
@@ -284,8 +172,8 @@ jobs:
           if [[ -d ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec" ]]; then
             sudo chmod -R a+rx ".lib-prebuilt/${{ matrix.platform }}/qt6/libexec"
           fi
-          if [[ -d ".lib-prebuilt/linux-x86_64/qt6/libexec" ]]; then
-            sudo chmod -R a+rx ".lib-prebuilt/linux-x86_64/qt6/libexec"
+          if [[ -d ".lib-prebuilt/linux-arm64/qt6/libexec" ]]; then
+            sudo chmod -R a+rx ".lib-prebuilt/linux-arm64/qt6/libexec"
           fi
 
       # ===== Step 1: Build Dependencies =====

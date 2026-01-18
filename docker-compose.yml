@@ -438,15 +438,19 @@ services:
     environment:
       - WINEDEBUG=-all
       - WINEPREFIX=/tmp/wine
+      - DISPLAY=:99
     command: >
       bash -c "
+        Xvfb :99 -screen 0 1024x768x24 &
+        sleep 1 &&
         mkdir -p /results &&
         BUILD_DIR=/workspace/.build/windows-x86_64/tests-build &&
+        WINE_CMD=wine64 && command -v wine64 >/dev/null || WINE_CMD=wine &&
         for test_dir in unit property integration; do
           test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe\" &&
           if [ -f \"$$test_exe\" ]; then
             echo \"Running tests_$${test_dir}.exe via Wine...\" &&
-            wine64 $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml || exit 1;
+            $$WINE_CMD $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml || exit 1;
           fi
         done
       "
@@ -463,15 +467,19 @@ services:
     environment:
       - WINEDEBUG=-all
       - WINEPREFIX=/tmp/wine
+      - DISPLAY=:99
     command: >
       bash -c "
+        Xvfb :99 -screen 0 1024x768x24 &
+        sleep 1 &&
         mkdir -p /results &&
         BUILD_DIR=/workspace/.build/windows-arm64/tests-build &&
+        WINE_CMD=wine && command -v wine-arm64 >/dev/null && WINE_CMD=wine-arm64 || command -v wine64 >/dev/null && WINE_CMD=wine64 &&
         for test_dir in unit property integration; do
           test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe\" &&
           if [ -f \"$$test_exe\" ]; then
             echo \"Running tests_$${test_dir}.exe via Wine...\" &&
-            wine $$test_exe --gtest_output=xml:/results/windows-arm64-tests_$${test_dir}.xml || exit 1;
+            $$WINE_CMD $$test_exe --gtest_output=xml:/results/windows-arm64-tests_$${test_dir}.xml || exit 1;
           fi
         done
       "

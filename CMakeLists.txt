@@ -118,7 +118,6 @@ message(STATUS "Parallel jobs: ${NPROC}")
 #######################################
 set(QT_GENERATOR "Unix Makefiles")
 set(QT_CMAKE_EXTRA_ARGS "")
-set(DIRECTX_HEADERS_INCLUDE "")
 
 if(TARGET_OS STREQUAL "linux")
     set(LIB_EXTENSION "so")
@@ -151,15 +150,14 @@ if(TARGET_OS STREQUAL "linux")
     endif()
 elseif(TARGET_OS STREQUAL "windows")
     # MinGW cross-compilation for Windows
-    # DirectX-Headers are provided for D3D12 headers during cross-compilation.
+    # Note: D3D12 RHI is disabled for MinGW builds due to ABI incompatibilities
+    # between MinGW and MSVC for DirectX headers. Qt will use D3D11 backend instead.
     set(QT_PLATFORM_ARGS
         -platform win32-g++
         -no-opengl
     )
     set(LIB_EXTENSION "dll")
     set(EXE_EXTENSION ".exe")
-    set(DIRECTX_HEADERS_DIR "${PREBUILT_DIR}/directx-headers")
-    set(DIRECTX_HEADERS_INCLUDE "${DIRECTX_HEADERS_DIR}/include/directx")
 endif()
 
 # Cross-compilation setup
@@ -196,32 +194,6 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
 
     # Create prebuilt directory
     file(MAKE_DIRECTORY ${PREBUILT_DIR})
-
-    set(DIRECTX_HEADERS_DEP "")
-    if(TARGET_OS STREQUAL "windows")
-        set(DIRECTX_HEADERS_STAMP "${PREBUILT_DIR}/.directx-headers-stamp")
-        if(NOT EXISTS "${DIRECTX_HEADERS_STAMP}")
-            ExternalProject_Add(directx_headers_external
-                GIT_REPOSITORY https://github.com/microsoft/DirectX-Headers.git
-                GIT_TAG v1.618.2
-                GIT_SHALLOW TRUE
-                GIT_PROGRESS TRUE
-
-                SOURCE_DIR ${PREBUILT_DIR}/directx-headers-src
-
-                CONFIGURE_COMMAND ""
-                BUILD_COMMAND ""
-                INSTALL_COMMAND
-                    ${CMAKE_COMMAND} -E make_directory ${DIRECTX_HEADERS_DIR}
-                    COMMAND ${CMAKE_COMMAND} -E copy_directory <SOURCE_DIR>/include ${DIRECTX_HEADERS_DIR}/include
-                    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/LICENSE ${DIRECTX_HEADERS_DIR}/LICENSE
-                    COMMAND ${CMAKE_COMMAND} -E touch ${DIRECTX_HEADERS_STAMP}
-
-                USES_TERMINAL_DOWNLOAD TRUE
-            )
-            set(DIRECTX_HEADERS_DEP directx_headers_external)
-        endif()
-    endif()
 
     # Build Qt configure command
     set(QT_CONFIGURE_CMD
@@ -262,12 +234,6 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
             PKG_CONFIG_SYSROOT_DIR=${SYSROOT_DIR}
         )
     endif()
-    if(TARGET_OS STREQUAL "windows" AND DIRECTX_HEADERS_INCLUDE)
-        list(APPEND QT_ENV_VARS
-            CPLUS_INCLUDE_PATH=${DIRECTX_HEADERS_INCLUDE}
-            C_INCLUDE_PATH=${DIRECTX_HEADERS_INCLUDE}
-        )
-    endif()
     if(QT_ENV_VARS)
         list(PREPEND QT_CONFIGURE_CMD
             ${CMAKE_COMMAND} -E env
@@ -295,25 +261,25 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
     endif()
 
     set(QT_PATCH_COMMAND ${CMAKE_COMMAND} -E echo "No Qt patches needed")
+    set(QT_UPDATE_COMMAND
+        cd <SOURCE_DIR> &&
+            git submodule update --init --depth 1 --single-branch -- qtbase qtdeclarative qtshadertools qtsvg qtwayland
+    )
     if(TARGET_OS STREQUAL "windows")
         set(QT_PATCH_FILES
+            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-disable-d3d12.patch"
             "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-netlistmgr-compat.patch"
             "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-win11-compat.patch"
         )
-        string(JOIN " " QT_PATCH_LIST ${QT_PATCH_FILES})
-        set(QT_PATCH_COMMAND
-            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>/qtbase
-            /bin/sh -lc "set -e; for patch in ${QT_PATCH_LIST}; do if git apply --reverse --check \"$patch\" >/dev/null 2>&1; then echo \"Qt patch already applied: $patch\"; else git apply \"$patch\"; fi; done"
+        set(QT_UPDATE_COMMAND
+            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+            /bin/sh ${CMAKE_SOURCE_DIR}/cmake/scripts/qt-init-repository.sh
+            ${QT_PATCH_FILES}
         )
-    endif()
-
-    set(QT_DEPENDS_ARGS "")
-    if(DIRECTX_HEADERS_DEP)
-        set(QT_DEPENDS_ARGS DEPENDS ${DIRECTX_HEADERS_DEP})
+        set(QT_PATCH_COMMAND ${CMAKE_COMMAND} -E echo "Qt patches applied during update")
     endif()
 
     ExternalProject_Add(qt6_external
-        ${QT_DEPENDS_ARGS}
         GIT_REPOSITORY https://code.qt.io/qt/qt5.git
         GIT_TAG v6.6.2
         GIT_SHALLOW TRUE
@@ -327,8 +293,7 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
 
         # Initialize only needed submodules with shallow clone (much faster)
         # Includes qtwayland for Wayland display support
-        UPDATE_COMMAND cd <SOURCE_DIR> &&
-            git submodule update --init --depth 1 --single-branch -- qtbase qtdeclarative qtshadertools qtsvg qtwayland
+        UPDATE_COMMAND ${QT_UPDATE_COMMAND}
 
         PATCH_COMMAND ${QT_PATCH_COMMAND}
 

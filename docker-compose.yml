@@ -436,7 +436,7 @@ services:
       - ./test-results:/results:rw
     working_dir: /workspace
     environment:
-      - WINEDEBUG=-all
+      - WINEDEBUG=warn+module,err+module
       - WINEPREFIX=/tmp/wine
       - DISPLAY=:99
     entrypoint: /bin/bash
@@ -449,11 +449,14 @@ services:
         BUILD_DIR=/workspace/.build/windows-x86_64/tests-build
         QT_BIN=/workspace/.lib-prebuilt/windows-x86_64/qt6/bin
         export WINEPATH="Z:$${QT_BIN}"
+        echo "WINEPATH=$$WINEPATH"
+        echo "Checking Qt DLLs..."
+        ls $$QT_BIN/*.dll 2>&1 | head -5 || echo "No DLLs found"
         for test_dir in unit property integration; do
           test_exe="$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe"
           if [ -f "$$test_exe" ]; then
             echo "Running tests_$${test_dir}.exe via Wine..."
-            wine $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml || exit 1
+            wine $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml 2>&1 || exit 1
           fi
         done
 

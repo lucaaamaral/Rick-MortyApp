@@ -8,6 +8,7 @@ RUN dpkg --add-architecture amd64 && \
     wine64 \
     xvfb \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Suppress Wine debug output

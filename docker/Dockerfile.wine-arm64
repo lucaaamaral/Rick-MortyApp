@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wine \
     xvfb \
     ca-certificates \
+    procps \
     # box64 may be needed as Wine ARM64 is experimental
     qemu-user-static \
     && rm -rf /var/lib/apt/lists/*

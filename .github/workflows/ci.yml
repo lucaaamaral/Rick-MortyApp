@@ -75,11 +75,13 @@ jobs:
         with:
           path: |
             .lib-prebuilt/${{ matrix.platform }}/qt6
+            .lib-prebuilt/${{ matrix.platform }}/openssl
             .lib-prebuilt/${{ matrix.platform }}/curl
             .lib-prebuilt/${{ matrix.platform }}/glog
             .lib-prebuilt/${{ matrix.platform }}/json
             .lib-prebuilt/${{ matrix.platform }}/fonts
             .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.openssl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
             .lib-prebuilt/${{ matrix.platform }}/.json-stamp
@@ -107,6 +109,17 @@ jobs:
               ERRORS=$((ERRORS + 1))
             fi
           done
+          # OpenSSL is only built for Linux (Windows uses Schannel)
+          if [[ "${{ matrix.is_linux }}" == "true" ]]; then
+            if [[ ! -f ".lib-prebuilt/${PLATFORM}/.openssl-stamp" ]]; then
+              echo "::warning::Missing stamp: .openssl-stamp"
+              ERRORS=$((ERRORS + 1))
+            fi
+            if [[ ! -d ".lib-prebuilt/${PLATFORM}/openssl" ]]; then
+              echo "::warning::Missing dir: openssl"
+              ERRORS=$((ERRORS + 1))
+            fi
+          fi
           if [[ "${{ matrix.is_linux }}" == "true" ]]; then
             if [[ ! -f ".lib-prebuilt/${PLATFORM}/qt6/lib/cmake/Qt6CoreTools/Qt6CoreToolsConfig.cmake" ]]; then
               echo "::warning::Missing Qt6CoreTools config (host tools)"
@@ -244,11 +257,13 @@ jobs:
         with:
           path: |
             .lib-prebuilt/${{ matrix.platform }}/qt6
+            .lib-prebuilt/${{ matrix.platform }}/openssl
             .lib-prebuilt/${{ matrix.platform }}/curl
             .lib-prebuilt/${{ matrix.platform }}/glog
             .lib-prebuilt/${{ matrix.platform }}/json
             .lib-prebuilt/${{ matrix.platform }}/fonts
             .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.openssl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
             .lib-prebuilt/${{ matrix.platform }}/.json-stamp
@@ -472,11 +487,13 @@ jobs:
         with:
           path: |
             .lib-prebuilt/${{ matrix.platform }}/qt6
+            .lib-prebuilt/${{ matrix.platform }}/openssl
             .lib-prebuilt/${{ matrix.platform }}/curl
             .lib-prebuilt/${{ matrix.platform }}/glog
             .lib-prebuilt/${{ matrix.platform }}/json
             .lib-prebuilt/${{ matrix.platform }}/fonts
             .lib-prebuilt/${{ matrix.platform }}/.qt-stamp
+            .lib-prebuilt/${{ matrix.platform }}/.openssl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.curl-stamp
             .lib-prebuilt/${{ matrix.platform }}/.glog-stamp
             .lib-prebuilt/${{ matrix.platform }}/.json-stamp

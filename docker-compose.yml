@@ -447,6 +447,8 @@ services:
         sleep 1
         mkdir -p /results
         BUILD_DIR=/workspace/.build/windows-x86_64/tests-build
+        QT_BIN=/workspace/.lib-prebuilt/windows-x86_64/qt6/bin
+        export WINEPATH="Z:$${QT_BIN}"
         for test_dir in unit property integration; do
           test_exe="$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe"
           if [ -f "$$test_exe" ]; then
@@ -476,6 +478,8 @@ services:
         sleep 1
         mkdir -p /results
         BUILD_DIR=/workspace/.build/windows-arm64/tests-build
+        QT_BIN=/workspace/.lib-prebuilt/windows-arm64/qt6/bin
+        export WINEPATH="Z:$${QT_BIN}"
         for test_dir in unit property integration; do
           test_exe="$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe"
           if [ -f "$$test_exe" ]; then

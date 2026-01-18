@@ -356,7 +356,14 @@ services:
     command: >
       bash -c "
         cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64 -DBUILD_TESTS=ON &&
-        cmake --build .build/windows-x86_64 --target tests -j$$(nproc)
+        cmake --build .build/windows-x86_64 --target tests -j$$(nproc) &&
+        echo 'Copying MinGW runtime DLLs...' &&
+        MINGW_LIB=/usr/lib/gcc/x86_64-w64-mingw32/10-posix &&
+        RUNTIME_DIR=.lib-prebuilt/windows-x86_64/runtime &&
+        mkdir -p $$RUNTIME_DIR &&
+        cp -v $$MINGW_LIB/libstdc++-6.dll $$RUNTIME_DIR/ &&
+        cp -v $$MINGW_LIB/libgcc_s_seh-1.dll $$RUNTIME_DIR/ &&
+        cp -v /usr/x86_64-w64-mingw32/lib/libwinpthread-1.dll $$RUNTIME_DIR/
       "
 
   test-build-windows-arm64:
@@ -369,7 +376,13 @@ services:
     command: >
       bash -c "
         cmake -B .build/windows-arm64 -DTARGET_PLATFORM=windows-arm64 -DBUILD_TESTS=ON &&
-        cmake --build .build/windows-arm64 --target tests -j$$(nproc)
+        cmake --build .build/windows-arm64 --target tests -j$$(nproc) &&
+        echo 'Copying LLVM-MinGW runtime DLLs...' &&
+        LLVM_MINGW=/opt/llvm-mingw/aarch64-w64-mingw32/bin &&
+        RUNTIME_DIR=.lib-prebuilt/windows-arm64/runtime &&
+        mkdir -p $$RUNTIME_DIR &&
+        cp -v $$LLVM_MINGW/libc++.dll $$RUNTIME_DIR/ 2>/dev/null || true &&
+        cp -v $$LLVM_MINGW/libunwind.dll $$RUNTIME_DIR/ 2>/dev/null || true
       "
 
   #######################################
@@ -436,7 +449,7 @@ services:
       - ./test-results:/results:rw
     working_dir: /workspace
     environment:
-      - WINEDEBUG=warn+module,err+module
+      - WINEDEBUG=-all
       - WINEPREFIX=/tmp/wine
       - DISPLAY=:99
     entrypoint: /bin/bash
@@ -448,15 +461,13 @@ services:
         mkdir -p /results
         BUILD_DIR=/workspace/.build/windows-x86_64/tests-build
         QT_BIN=/workspace/.lib-prebuilt/windows-x86_64/qt6/bin
-        export WINEPATH="Z:$${QT_BIN}"
-        echo "WINEPATH=$$WINEPATH"
-        echo "Checking Qt DLLs..."
-        ls $$QT_BIN/*.dll 2>&1 | head -5 || echo "No DLLs found"
+        RUNTIME=/workspace/.lib-prebuilt/windows-x86_64/runtime
+        export WINEPATH="Z:$${QT_BIN};Z:$${RUNTIME}"
         for test_dir in unit property integration; do
           test_exe="$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe"
           if [ -f "$$test_exe" ]; then
             echo "Running tests_$${test_dir}.exe via Wine..."
-            wine $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml 2>&1 || exit 1
+            wine $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml || exit 1
           fi
         done
 
@@ -482,7 +493,8 @@ services:
         mkdir -p /results
         BUILD_DIR=/workspace/.build/windows-arm64/tests-build
         QT_BIN=/workspace/.lib-prebuilt/windows-arm64/qt6/bin
-        export WINEPATH="Z:$${QT_BIN}"
+        RUNTIME=/workspace/.lib-prebuilt/windows-arm64/runtime
+        export WINEPATH="Z:$${QT_BIN};Z:$${RUNTIME}"
         for test_dir in unit property integration; do
           test_exe="$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe"
           if [ -f "$$test_exe" ]; then

@@ -387,9 +387,12 @@ jobs:
       - name: Ensure host Qt tools executable
         if: matrix.enabled == true
         run: |
-          if [[ -d ".lib-prebuilt/linux-x86_64/qt6/libexec" ]]; then
-            sudo chmod -R a+rx ".lib-prebuilt/linux-x86_64/qt6/libexec"
-          fi
+          # Make all Qt host tools executable (permissions lost during artifact transfer)
+          for dir in bin libexec; do
+            if [[ -d ".lib-prebuilt/linux-x86_64/qt6/$dir" ]]; then
+              sudo chmod -R a+rx ".lib-prebuilt/linux-x86_64/qt6/$dir"
+            fi
+          done
 
       - name: Download prebuilt (Windows fallback)
         id: windows-prebuilt

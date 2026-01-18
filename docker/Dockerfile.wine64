@@ -36,18 +36,9 @@ if ! pgrep -x Xvfb > /dev/null; then
     sleep 1
 fi
 
-# Determine which wine command is available
-if command -v wine64 &> /dev/null; then
-    WINE_CMD="wine64"
-elif command -v wine &> /dev/null; then
-    WINE_CMD="wine"
-else
-    echo "Error: No wine executable found" >&2
-    exit 1
-fi
-
-# Run the test executable
-exec $WINE_CMD "$@"
+# Run the test executable using wine
+# Note: Debian's wine64 package provides 'wine', not 'wine64'
+exec wine "$@"
 EOF
 
 RUN chmod +x /usr/local/bin/run-wine-test.sh

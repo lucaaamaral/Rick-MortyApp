@@ -3,8 +3,10 @@
 FROM debian:bookworm
 
 # Install Wine64 for running Windows PE executables
+# Note: Install both wine and wine64 for compatibility across Debian versions
 RUN dpkg --add-architecture amd64 && \
     apt-get update && apt-get install -y --no-install-recommends \
+    wine \
     wine64 \
     xvfb \
     ca-certificates \
@@ -34,8 +36,18 @@ if ! pgrep -x Xvfb > /dev/null; then
     sleep 1
 fi
 
+# Determine which wine command is available
+if command -v wine64 &> /dev/null; then
+    WINE_CMD="wine64"
+elif command -v wine &> /dev/null; then
+    WINE_CMD="wine"
+else
+    echo "Error: No wine executable found" >&2
+    exit 1
+fi
+
 # Run the test executable
-exec wine64 "$@"
+exec $WINE_CMD "$@"
 EOF
 
 RUN chmod +x /usr/local/bin/run-wine-test.sh

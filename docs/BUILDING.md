@@ -111,24 +111,29 @@ Docker services are defined in `docker-compose.yml`:
 
 | Service | Purpose |
 |---------|---------|
-| `deps-arm64` / `deps-amd64` | Build Qt6 + curl + glog + fonts |
-| `app-arm64` / `app-amd64` | Build application only |
-| `distribute-arm64` / `distribute-amd64` | Create distribution bundle |
-| `appimage-arm64` / `appimage-amd64` | Create AppImage |
+| `deps-linux-x86_64` / `deps-linux-arm64` | Build Qt6 + curl + glog + fonts for Linux |
+| `deps-windows-x86_64` / `deps-windows-arm64` | Build Qt6 + curl + glog for Windows |
+| `app-linux-x86_64` / `app-linux-arm64` | Build Linux application |
+| `app-windows-x86_64` / `app-windows-arm64` | Build Windows application |
+| `test-build-<platform>` | Build test executables |
+| `test-run-<platform>` | Run tests (Linux native / Wine for Windows) |
+| `distribute-<platform>` | Create distribution bundle |
+| `appimage-linux-x86_64` / `appimage-linux-arm64` | Create AppImage (Linux only) |
+| `package-windows-x86_64` / `package-windows-arm64` | Create Windows ZIP |
 
 **First-time Build (2-3 hours for Qt):**
 ```bash
 # Build dependencies first
-docker compose run --rm deps-arm64
+docker compose run --rm deps-linux-arm64
 
 # Build app + distribution + AppImage
-docker compose run --rm appimage-arm64
+docker compose run --rm appimage-linux-arm64
 ```
 
 **Incremental Build (uses cached dependencies):**
 ```bash
 # Just rebuild app and create AppImage
-docker compose run --rm appimage-arm64
+docker compose run --rm appimage-linux-arm64
 ```
 
 **Clean Rebuild:**
@@ -201,6 +206,25 @@ cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64
 cmake --build .build/windows-x86_64
 ```
 
+## Qt MinGW Patch Notes
+
+We do not change Qt sources in-repo. During Windows cross-compilation (MinGW),
+we apply small, temporary compatibility patches from `cmake/patches/` at build
+time only. These patches are narrowly scoped, documented here, and do not
+affect MSVC builds.
+
+- `qt6-mingw-netlistmgr-compat.patch`: Uses the numeric value `0x4000` for
+  `NLM_INTERNET_CONNECTIVITY_WEBHIJACK` when MinGW headers do not define it.
+  This matches the Windows SDK constant and does not change runtime behavior.
+- `qt6-mingw-disable-d3d12.patch`: Disables the Direct3D 12 RHI backend for
+  MinGW builds (MSVC-only). This avoids missing/ABI-incompatible D3D12 headers
+  in MinGW while keeping D3D11 support.
+- `qt6-mingw-win11-compat.patch`: Replaces `QOperatingSystemVersion::Windows11`
+  with an explicit version check for MinGW, preserving behavior.
+
+These patches are intended to be removed once upstream MinGW support covers the
+same cases.
+
 ### Qt Cross-Compilation
 
 Qt cross-compilation requires a **host Qt** installation first (for moc, rcc, uic tools):
@@ -266,10 +290,26 @@ rm .lib-prebuilt/linux-arm64/fonts/Bangers-Regular.ttf
 
 ### Windows
 
-- Cross-compiled from Linux using MinGW
+- Cross-compiled from Linux using MinGW (x86_64) or LLVM-MinGW (ARM64)
 - Uses `win32-g++` Qt platform
 - Produces `.exe` binary and DLL dependencies
-- No AppImage (Windows uses different packaging)
+- Packaged as ZIP for distribution
+
+### Wine Testing
+
+Windows executables are tested via Wine on Linux:
+
+| Platform | Wine Version | Notes |
+|----------|--------------|-------|
+| Windows x86_64 | Wine 8.0+ (system) | Standard Debian/Ubuntu Wine |
+| Windows ARM64 | Wine 10.17 (built from source) | Requires Wine 10.2+ for ARM64 |
+
+**Why Wine 10 for ARM64?**
+- Wine 8.0: Crashes with page fault in ucrtbase
+- Wine 9.0: Hangs during wineboot initialization (CPU 90%+)
+- Wine 10.2+: Fixed ARM64 hang bug ([LP#1100695](https://bugs.launchpad.net/wine/+bug/1100695))
+
+The `docker/Dockerfile.wine10-arm64` builds Wine 10.17 from source with ARM64 PE support.
 
 ## Troubleshooting
 

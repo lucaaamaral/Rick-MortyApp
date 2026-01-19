@@ -109,16 +109,18 @@ Docker Compose services handle all build steps:
 
 ```bash
 # Build dependencies (cached after first build)
-docker compose run --rm deps-amd64   # For x86_64
-docker compose run --rm deps-arm64   # For ARM64
+docker compose run --rm deps-linux-x86_64   # For Linux x86_64
+docker compose run --rm deps-linux-arm64    # For Linux ARM64
+docker compose run --rm deps-windows-x86_64 # For Windows x86_64
+docker compose run --rm deps-windows-arm64  # For Windows ARM64
 
 # Build application
-docker compose run --rm app-amd64
-docker compose run --rm app-arm64
+docker compose run --rm app-linux-x86_64
+docker compose run --rm app-windows-x86_64
 
 # Create distribution
-docker compose run --rm distribute-amd64
-docker compose run --rm appimage-amd64
+docker compose run --rm distribute-linux-x86_64
+docker compose run --rm appimage-linux-x86_64
 ```
 
 ### Manual CMake Build
@@ -285,16 +287,30 @@ See [docs/API.md](docs/API.md) for detailed API documentation.
 
 ## CI/CD
 
-GitHub Actions workflow builds for all supported platforms:
+GitHub Actions workflow builds and tests all supported platforms using two independent execution branches:
 
-- Linux x86_64 (native)
-- Linux ARM64 (cross-compiled)
-- Windows x86_64 (cross-compiled via MinGW)
-- Windows ARM64 (cross-compiled via LLVM-MinGW)
+```
+x86_64 Branch: build-linux-x86_64 → build-windows-x86_64
+ARM64 Branch:  build-linux-arm64  → build-windows-arm64
+```
 
-Artifacts include:
-- AppImage (Linux)
+| Platform | Build | Test Runner | Host Qt |
+|----------|-------|-------------|---------|
+| Linux x86_64 | Native x86_64 | Native Linux | Self |
+| Windows x86_64 | MinGW cross-compile | Wine 8.0+ | linux-x86_64 |
+| Linux ARM64 | QEMU emulation | QEMU ARM64 | Self |
+| Windows ARM64 | LLVM-MinGW cross-compile | Wine 10.17 | linux-arm64 |
+
+**Parallel execution:** x86_64 and ARM64 branches run independently. Windows builds start as soon as their corresponding Linux build completes.
+
+**Wine 10 for ARM64:** Windows ARM64 tests use Wine 10.17 built from source.
+Earlier Wine versions (8.0, 9.0) had ARM64 compatibility issues fixed in Wine 10.2+.
+
+**Artifacts:**
+- AppImage (Linux x86_64, Linux ARM64)
+- Windows ZIP distributions (x86_64, ARM64)
 - Prebuilt dependency tarballs (for faster CI rebuilds)
+- Test result XML files (JUnit format)
 
 ## Troubleshooting
 

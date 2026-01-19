@@ -376,11 +376,52 @@ genhtml coverage.info --output-directory coverage_report
 
 ## Continuous Integration
 
-Tests run automatically on every push via GitHub Actions:
+Tests run automatically on every push via GitHub Actions across all 4 platforms:
 
-- All unit tests must pass
-- Tests run on Linux x86_64 runner
+| Platform | Test Runner | Docker Image |
+|----------|-------------|--------------|
+| Linux x86_64 | Native Linux | `Dockerfile.test-runner` |
+| Linux ARM64 | QEMU ARM64 emulation | `Dockerfile.test-runner` |
+| Windows x86_64 | Wine 8.0+ | `Dockerfile.wine64` |
+| Windows ARM64 | Wine 10.17 | `Dockerfile.wine10-arm64` |
+
+### Running Tests Locally via Docker
+
+```bash
+# Build tests
+docker compose run --rm test-build-linux-x86_64
+docker compose run --rm test-build-windows-arm64
+
+# Run tests
+docker compose run --rm test-run-linux-x86_64
+docker compose run --rm test-run-windows-arm64  # Uses Wine 10
+
+# Test results are written to test-results/*.xml
+```
+
+### Wine 10 for ARM64
+
+Windows ARM64 tests require Wine 10.2+ due to ARM64 compatibility fixes:
+- Wine 8.0: Crashes with page fault in ucrtbase
+- Wine 9.0: Hangs during wineboot initialization
+- Wine 10.2+: Fixed ARM64 hang bug ([LP#1100695](https://bugs.launchpad.net/wine/+bug/1100695))
+
+The `Dockerfile.wine10-arm64` builds Wine 10.17 from source (~7 min cached).
+
+### CI Workflow Structure
+
+The CI runs two independent execution branches in parallel:
+
+```
+x86_64 Branch: build-linux-x86_64 → build-windows-x86_64
+ARM64 Branch:  build-linux-arm64  → build-windows-arm64
+```
+
+- Windows builds start as soon as their corresponding Linux build completes
+- Each branch uses its own host Qt for cross-compilation
+- All tests must pass on all 4 platforms
 - Test failures block PR merges
+- Test results are uploaded as JUnit XML artifacts
 
 ## Best Practices
 

@@ -862,12 +862,15 @@ elseif(TARGET_OS STREQUAL "windows")
             COMMENT "Copying MinGW runtime DLLs"
         )
     else()
-        # LLVM-MinGW runtime DLLs for ARM64
+        # LLVM-MinGW runtime DLLs for ARM64 (may not exist depending on LLVM-MinGW version)
         set(LLVM_MINGW_DIR "/opt/llvm-mingw/aarch64-w64-mingw32/bin")
         add_custom_command(TARGET distribute POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E echo "Copying LLVM-MinGW runtime DLLs..."
-            COMMAND sh -c "cp ${LLVM_MINGW_DIR}/libc++.dll ${DIST_DIR}/lib/ 2>/dev/null || true"
-            COMMAND sh -c "cp ${LLVM_MINGW_DIR}/libunwind.dll ${DIST_DIR}/lib/ 2>/dev/null || true"
+            COMMAND ${CMAKE_COMMAND}
+                -DSRC_DIR=${LLVM_MINGW_DIR}
+                -DDST_DIR=${DIST_DIR}/lib
+                -DFILES=libc++.dll$<SEMICOLON>libunwind.dll
+                -P ${CMAKE_SOURCE_DIR}/cmake/scripts/copy-if-exists.cmake
             COMMENT "Copying LLVM-MinGW runtime DLLs"
         )
     endif()

@@ -17,11 +17,13 @@ QStringList LoadBundledFonts()
 {
     const QString appDir = QCoreApplication::applicationDirPath();
     QDir baseDir(appDir);
-    baseDir.cdUp();
 
+    // On Linux AppImage, exe is in usr/bin/, fonts in usr/share/fonts/
+    // On Windows, exe is in root, fonts in share/fonts/
     const QStringList fontDirs = {
-        baseDir.filePath("share/fonts"),
-        baseDir.filePath("lib/fonts"),
+        baseDir.filePath("share/fonts"),           // Windows: same directory
+        baseDir.filePath("../share/fonts"),        // Linux AppImage: parent/share/fonts
+        baseDir.filePath("lib/fonts"),             // Alternative location
     };
 
     QStringList loadedFamilies;

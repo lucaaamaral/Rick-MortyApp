@@ -758,6 +758,14 @@ ExternalProject_Add(rick_and_morty_viewer
 #######################################
 # Distribution target
 #######################################
+
+# Determine Qt library source directory (bin/ for Windows DLLs, lib/ for Linux .so)
+if(TARGET_OS STREQUAL "windows")
+    set(QT_LIB_SRC_DIR ${QT_INSTALL_DIR}/bin)
+else()
+    set(QT_LIB_SRC_DIR ${QT_INSTALL_DIR}/lib)
+endif()
+
 add_custom_target(distribute
     DEPENDS rick_and_morty_viewer
     COMMAND ${CMAKE_COMMAND} -E echo "Creating distribution bundle for ${TARGET_PLATFORM}..."
@@ -771,9 +779,9 @@ add_custom_target(distribute
         ${CMAKE_BINARY_DIR}/app-build/RickAndMortyViewer${EXE_EXTENSION}
         ${DIST_DIR}/
 
-    # Copy Qt libraries
+    # Copy Qt libraries (bin/ for Windows DLLs, lib/ for Linux shared libs)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${QT_INSTALL_DIR}/lib
+        ${QT_LIB_SRC_DIR}
         ${DIST_DIR}/lib
 
     # Copy Qt plugins
@@ -835,6 +843,34 @@ elseif(TARGET_OS STREQUAL "windows")
             ${CMAKE_SOURCE_DIR}/cmake/run.bat.in
             ${DIST_DIR}/run.bat
     )
+    # Copy MinGW runtime DLLs for Windows
+    if(TARGET_ARCH STREQUAL "x86_64")
+        # MinGW-w64 runtime DLLs
+        set(MINGW_RUNTIME_DIR "/usr/lib/gcc/x86_64-w64-mingw32/10-posix")
+        set(MINGW_PTHREAD_DIR "/usr/x86_64-w64-mingw32/lib")
+        add_custom_command(TARGET distribute POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Copying MinGW runtime DLLs..."
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${MINGW_RUNTIME_DIR}/libstdc++-6.dll
+                ${DIST_DIR}/lib/
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${MINGW_RUNTIME_DIR}/libgcc_s_seh-1.dll
+                ${DIST_DIR}/lib/
+            COMMAND ${CMAKE_COMMAND} -E copy
+                ${MINGW_PTHREAD_DIR}/libwinpthread-1.dll
+                ${DIST_DIR}/lib/
+            COMMENT "Copying MinGW runtime DLLs"
+        )
+    else()
+        # LLVM-MinGW runtime DLLs for ARM64
+        set(LLVM_MINGW_DIR "/opt/llvm-mingw/aarch64-w64-mingw32/bin")
+        add_custom_command(TARGET distribute POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Copying LLVM-MinGW runtime DLLs..."
+            COMMAND sh -c "cp ${LLVM_MINGW_DIR}/libc++.dll ${DIST_DIR}/lib/ 2>/dev/null || true"
+            COMMAND sh -c "cp ${LLVM_MINGW_DIR}/libunwind.dll ${DIST_DIR}/lib/ 2>/dev/null || true"
+            COMMENT "Copying LLVM-MinGW runtime DLLs"
+        )
+    endif()
 endif()
 
 #######################################

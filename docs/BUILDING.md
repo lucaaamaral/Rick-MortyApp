@@ -213,14 +213,41 @@ we apply small, temporary compatibility patches from `cmake/patches/` at build
 time only. These patches are narrowly scoped, documented here, and do not
 affect MSVC builds.
 
-- `qt6-mingw-netlistmgr-compat.patch`: Uses the numeric value `0x4000` for
-  `NLM_INTERNET_CONNECTIVITY_WEBHIJACK` when MinGW headers do not define it.
-  This matches the Windows SDK constant and does not change runtime behavior.
-- `qt6-mingw-disable-d3d12.patch`: Disables the Direct3D 12 RHI backend for
-  MinGW builds (MSVC-only). This avoids missing/ABI-incompatible D3D12 headers
-  in MinGW while keeping D3D11 support.
-- `qt6-mingw-win11-compat.patch`: Replaces `QOperatingSystemVersion::Windows11`
-  with an explicit version check for MinGW, preserving behavior.
+### Patches Applied
+
+| Patch | Purpose |
+|-------|---------|
+| `qt6-mingw-netlistmgr-compat.patch` | Uses numeric value `0x4000` for `NLM_INTERNET_CONNECTIVITY_WEBHIJACK` (undefined in MinGW headers) |
+| `qt6-mingw-disable-d3d12.patch` | Disables D3D12 RHI backend for MinGW (ABI incompatibility), keeps D3D11 |
+| `qt6-mingw-win11-compat.patch` | Replaces `QOperatingSystemVersion::Windows11` with explicit version check |
+
+### How Patches Are Applied
+
+The `cmake/scripts/qt-init-repository.sh` script handles Qt submodule initialization
+and patch application during Windows cross-compilation:
+
+```bash
+# What the script does:
+# 1. Initialize Qt submodules with shallow clone (faster)
+git submodule update --init --depth 1 --single-branch -- qtbase qtdeclarative qtshadertools qtsvg
+
+# 2. Apply MinGW patches to qtbase
+cd qtbase
+git apply ../cmake/patches/qt6-mingw-*.patch
+```
+
+The CMake build system automatically invokes this script when `TARGET_OS=windows`:
+
+```cmake
+# From CMakeLists.txt - Qt ExternalProject configuration
+if(TARGET_OS STREQUAL "windows")
+    set(QT_UPDATE_COMMAND
+        ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+        /bin/sh ${CMAKE_SOURCE_DIR}/cmake/scripts/qt-init-repository.sh
+        ${QT_PATCH_FILES}
+    )
+endif()
+```
 
 These patches are intended to be removed once upstream MinGW support covers the
 same cases.

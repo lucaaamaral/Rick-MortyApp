@@ -413,15 +413,23 @@ The `Dockerfile.wine10-arm64` builds Wine 10.17 from source (~7 min cached).
 The CI runs two independent execution branches in parallel:
 
 ```
-x86_64 Branch: build-linux-x86_64 → build-windows-x86_64
-ARM64 Branch:  build-linux-arm64  → build-windows-arm64
+x86_64 Branch: build-linux-x86_64 ─────────────────────→ build-windows-x86_64
+ARM64 Branch:  build-linux-arm64  ─┬─→ build-windows-arm64
+               build-wine10-arm64 ─┘   (uses Wine 10 image)
 ```
 
+**Key points:**
 - Windows builds start as soon as their corresponding Linux build completes
+- Wine 10 ARM64 image builds in parallel with Linux ARM64 (~8 min, cached)
 - Each branch uses its own host Qt for cross-compilation
 - All tests must pass on all 4 platforms
 - Test failures block PR merges
 - Test results are uploaded as JUnit XML artifacts
+
+**Wine 10 Caching:**
+- First run: Builds Wine 10 from source (~8 min on native ARM64)
+- Subsequent runs: Loads from cache (seconds)
+- Cache key based on `Dockerfile.wine10-arm64` hash
 
 ## Best Practices
 

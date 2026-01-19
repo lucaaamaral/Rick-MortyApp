@@ -49,17 +49,44 @@ The build environment is defined in `docker/Dockerfile`:
 
 The `docker-compose.yml` defines services for each build step and platform:
 
+**Build Services:**
+
 | Service | Purpose |
 |---------|---------|
-| `deps-amd64` / `deps-arm64` | Build Qt6 + curl + glog + fonts |
-| `app-amd64` / `app-arm64` | Build application only |
-| `distribute-amd64` / `distribute-arm64` | Create distribution bundle |
-| `appimage-amd64` / `appimage-arm64` | Create AppImage |
-| `deps-linux-x86_64` | Cross-compile dependencies for x86_64 |
-| `deps-linux-arm64` | Cross-compile dependencies for ARM64 |
-| `deps-windows-x86_64` | Cross-compile dependencies for Windows x86_64 |
-| `deps-windows-arm64` | Cross-compile dependencies for Windows ARM64 |
-| `clean-*` | Remove build artifacts |
+| `deps-linux-x86_64` / `deps-linux-arm64` | Build Qt6 + curl + glog + fonts for Linux |
+| `deps-windows-x86_64` / `deps-windows-arm64` | Build Qt6 + curl + glog for Windows (cross-compile) |
+| `app-linux-x86_64` / `app-linux-arm64` | Build Linux application |
+| `app-windows-x86_64` / `app-windows-arm64` | Build Windows application (cross-compile) |
+
+**Distribution Services:**
+
+| Service | Purpose |
+|---------|---------|
+| `distribute-linux-x86_64` / `distribute-linux-arm64` | Create Linux distribution bundle |
+| `distribute-windows-x86_64` / `distribute-windows-arm64` | Create Windows distribution bundle |
+| `appimage-linux-x86_64` / `appimage-linux-arm64` | Create Linux AppImage |
+| `package-windows-x86_64` / `package-windows-arm64` | Create Windows ZIP distribution |
+| `bundle-glibc-linux-x86_64` | Bundle glibc for portable Linux builds |
+
+**Testing Services:**
+
+| Service | Purpose | Runner |
+|---------|---------|--------|
+| `test-build-linux-x86_64` / `test-build-linux-arm64` | Build Linux test executables | Native |
+| `test-build-windows-x86_64` / `test-build-windows-arm64` | Build Windows test executables | Native |
+| `test-run-linux-x86_64` / `test-run-linux-arm64` | Run Linux tests | Native Linux |
+| `test-run-windows-x86_64` | Run Windows x86_64 tests | Wine 8.0+ |
+| `test-run-windows-arm64` | Run Windows ARM64 tests | Wine 10.17 |
+| `smoke-test-linux-x86_64` / `smoke-test-linux-arm64` | Quick smoke test | Native |
+
+**Utility Services:**
+
+| Service | Purpose |
+|---------|---------|
+| `clean-linux-x86_64` / `clean-linux-arm64` | Remove Linux build artifacts |
+| `clean-windows-x86_64` / `clean-windows-arm64` | Remove Windows build artifacts |
+| `prebuilt-linux-x86_64` / `prebuilt-linux-arm64` | Create prebuilt dependency tarballs |
+| `prebuilt-windows-x86_64` / `prebuilt-windows-arm64` | Create prebuilt dependency tarballs |
 
 ## Using build.sh
 
@@ -139,10 +166,37 @@ docker compose run --rm appimage-arm64
 ### Running Tests
 
 ```bash
-# Build and run tests
-docker compose run --rm tests-amd64
-docker compose run --rm tests-arm64
+# Build test executables
+docker compose run --rm test-build-linux-x86_64
+docker compose run --rm test-build-windows-x86_64
+
+# Run tests (Linux - native)
+docker compose run --rm test-run-linux-x86_64
+docker compose run --rm test-run-linux-arm64
+
+# Run tests (Windows - via Wine)
+docker compose run --rm test-run-windows-x86_64   # Uses Wine 8.0+
+docker compose run --rm test-run-windows-arm64    # Uses Wine 10.17
+
+# Quick smoke test
+docker compose run --rm smoke-test-linux-x86_64
 ```
+
+### Wine Testing
+
+Windows executables are tested via Wine on Linux:
+
+| Platform | Wine Version | Docker Image |
+|----------|--------------|--------------|
+| Windows x86_64 | Wine 8.0+ (system) | `Dockerfile.wine64` |
+| Windows ARM64 | Wine 10.17 (built from source) | `Dockerfile.wine10-arm64` |
+
+**Wine 10 for ARM64:**
+Wine 8.0/9.0 had bugs causing ARM64 Wine to hang or crash during initialization.
+Wine 10.2+ fixes this ([LP#1100695](https://bugs.launchpad.net/wine/+bug/1100695)).
+
+The `Dockerfile.wine10-arm64` builds Wine 10.17 from source with ARM64 PE support.
+First build takes ~8 minutes on native ARM64, but is cached for subsequent runs.
 
 ## Volume Mounts
 

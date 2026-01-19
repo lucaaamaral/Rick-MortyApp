@@ -280,19 +280,24 @@ See [docs/API.md](docs/API.md) for detailed API documentation.
 ## Documentation
 
 - [Building Guide](docs/BUILDING.md) - Detailed build instructions
+- [Docker Guide](docs/DOCKER.md) - Docker build environment
+- [CI/CD Guide](docs/CI.md) - GitHub Actions workflow architecture
+- [Testing Guide](docs/TESTING.md) - Test infrastructure documentation
 - [API Documentation](docs/API.md) - Rick and Morty API reference
 - [Design Document](docs/DESIGN.md) - Architecture and design decisions
 - [UI Design](docs/UI_DESIGN.md) - User interface specifications
-- [Testing Guide](docs/TESTING.md) - Test infrastructure documentation
 
 ## CI/CD
 
 GitHub Actions workflow builds and tests all supported platforms using two independent execution branches:
 
 ```
-x86_64 Branch: build-linux-x86_64 → build-windows-x86_64
-ARM64 Branch:  build-linux-arm64  → build-windows-arm64
+x86_64 Branch: build-linux-x86_64 ─────────────────────→ build-windows-x86_64
+ARM64 Branch:  build-linux-arm64  ─┬─→ build-windows-arm64
+               build-wine10-arm64 ─┘   (uses Wine 10 image)
 ```
+
+The Wine 10 ARM64 image builds in parallel with Linux ARM64 and is cached based on Dockerfile hash.
 
 | Platform | Build | Test Runner | Host Qt |
 |----------|-------|-------------|---------|

@@ -1,5 +1,9 @@
 # Build directories
 .build/
+.wine-build/
+
+# Test results (generated during CI/local tests)
+test-results/
 
 # Prebuilt dependencies (Qt, curl, glog, fonts)
 .lib-prebuilt/
@@ -25,3 +29,4 @@ squashfs-root/
 Thumbs.db
 
 .claude
+.uuid

@@ -1,325 +1,868 @@
-name: Build and Release
+name: Build, Test, and Release
 
 on:
   push:
     branches: [main, master]
     tags: ['v*']
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
     inputs:
       force_rebuild_deps:
         description: 'Force rebuild dependencies (ignore cache)'
         type: boolean
         default: false
+      skip_x86_64:
+        description: 'Skip x86_64 builds (Linux + Windows)'
+        type: boolean
+        default: false
+      skip_arm64:
+        description: 'Skip ARM64 builds (Linux + Windows)'
+        type: boolean
+        default: false
+
+# Cancel in-progress runs on new pushes to the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   DOCKER_BUILDKIT: 1
   COMPOSE_DOCKER_CLI_BUILD: 1
+  CACHE_VERSION: '1'
 
 jobs:
   # =============================================
-  # Linux x86_64 - Native build
+  # Phase 1: Detect what changed (for push/PR triggers)
+  # =============================================
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'CMakeLists.txt'
+              - 'cmake/**'
+              - 'docker/**'
+              - '.github/workflows/ci.yml'
+              - '.github/cache-inputs.txt'
+
+  # =============================================================================
+  # x86_64 BRANCH: Linux x86_64 → Windows x86_64
+  # =============================================================================
+
+  # =============================================
+  # Build Linux x86_64
   # =============================================
   build-linux-x86_64:
+    needs: changes
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.skip_x86_64 != true) ||
+      (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')))
     runs-on: ubuntu-latest
+    outputs:
+      tests-passed: ${{ steps.run-tests.outputs.tests-passed }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache prebuilt dependencies
-        id: cache-deps
-        uses: actions/cache@v4
+      # ===== Cache =====
+      - name: Restore linux-x86_64 cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             .lib-prebuilt/linux-x86_64/qt6
+            .lib-prebuilt/linux-x86_64/openssl
             .lib-prebuilt/linux-x86_64/curl
             .lib-prebuilt/linux-x86_64/glog
+            .lib-prebuilt/linux-x86_64/json
             .lib-prebuilt/linux-x86_64/fonts
             .lib-prebuilt/linux-x86_64/.qt-stamp
+            .lib-prebuilt/linux-x86_64/.openssl-stamp
             .lib-prebuilt/linux-x86_64/.curl-stamp
             .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          restore-keys: prebuilt-linux-x86_64-
+            .lib-prebuilt/linux-x86_64/.json-stamp
+          key: prebuilt-linux-x86_64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: |
+            prebuilt-linux-x86_64-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+            prebuilt-linux-x86_64-master-
+            prebuilt-linux-x86_64-
 
-      - name: Build dependencies
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+      - name: Validate cache
+        id: validate-cache
+        if: steps.cache-restore.outputs.cache-hit == 'true'
         run: |
+          ERRORS=0
+          for stamp in .qt-stamp .openssl-stamp .curl-stamp .glog-stamp .json-stamp; do
+            if [[ ! -f ".lib-prebuilt/linux-x86_64/${stamp}" ]]; then
+              echo "::warning::Missing stamp: ${stamp}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          for dir in qt6 openssl curl glog json; do
+            if [[ ! -d ".lib-prebuilt/linux-x86_64/${dir}" ]]; then
+              echo "::warning::Missing dir: ${dir}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [[ ! -x ".lib-prebuilt/linux-x86_64/qt6/libexec/moc" ]]; then
+            echo "::warning::Missing Qt host tool: moc"
+            ERRORS=$((ERRORS + 1))
+          fi
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "cache-valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "cache-valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download prebuilt fallback
+        id: prebuilt-fallback
+        if: (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tmp="/tmp/lib-prebuilt-linux-x86_64.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-linux-x86_64.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/linux-x86_64"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            if [[ -x ".lib-prebuilt/linux-x86_64/qt6/libexec/moc" ]]; then
+              echo "deps-ready=true" >> $GITHUB_OUTPUT
+            else
+              echo "::warning::Prebuilt Qt missing host tools; rebuilding."
+              sudo rm -rf ".lib-prebuilt/linux-x86_64/qt6"
+              sudo rm -f ".lib-prebuilt/linux-x86_64/.qt-stamp"
+            fi
+          fi
+          true
+
+      - name: Ensure Qt tools executable
+        run: |
+          if [[ -d ".lib-prebuilt/linux-x86_64/qt6/libexec" ]]; then
+            sudo chmod -R a+rx ".lib-prebuilt/linux-x86_64/qt6/libexec"
+          fi
+
+      # ===== Build =====
+      - name: Build dependencies
+        id: build-deps
+        if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
+        run: |
+          if [[ "${{ inputs.force_rebuild_deps }}" != "true" && "${{ steps.prebuilt-fallback.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded prebuilt deps"
+            exit 0
+          fi
           docker compose run --rm deps-linux-x86_64
-          # Clean build artifacts to fit in cache
-          rm -rf .lib-prebuilt/linux-x86_64/qt6-build
-          rm -rf .lib-prebuilt/linux-x86_64/qt6-src
-          rm -rf .lib-prebuilt/linux-x86_64/curl-build
-          rm -rf .lib-prebuilt/linux-x86_64/curl-src
-          rm -rf .lib-prebuilt/linux-x86_64/glog-build
-          rm -rf .lib-prebuilt/linux-x86_64/glog-src
+          sudo rm -rf .lib-prebuilt/linux-x86_64/{qt6,curl,glog,json}-{build,src}
+          echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: 240
 
-      - name: Build application and AppImage
+      - name: Build application
+        run: docker compose run --rm app-linux-x86_64
+        timeout-minutes: 60
+
+      - name: Build tests
+        run: docker compose run --rm test-build-linux-x86_64
+        timeout-minutes: 30
+
+      # ===== Test =====
+      - name: Run tests
+        id: run-tests
         run: |
-          docker compose run --rm app-linux-x86_64
+          mkdir -p test-results
+          docker compose run --rm test-run-linux-x86_64
+          echo "tests-passed=true" >> $GITHUB_OUTPUT
+        timeout-minutes: 30
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-linux-x86_64
+          path: test-results/*.xml
+          retention-days: 30
+
+      # ===== Distribute =====
+      - name: Create distribution
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: |
           docker compose run --rm distribute-linux-x86_64
           docker compose run --rm appimage-linux-x86_64
 
       - name: Upload AppImage
+        if: steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: appimage-linux-x86_64
           path: .distribute/RickAndMortyViewer-x86_64.AppImage
           retention-days: 30
 
+      # ===== Host Qt for Windows x86_64 =====
+      - name: Upload host Qt
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-qt-linux-x86_64
+          path: .lib-prebuilt/linux-x86_64/qt6
+          retention-days: 1
+
+      # ===== Cache & Prebuilt =====
+      - name: Save cache
+        if: steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .lib-prebuilt/linux-x86_64/qt6
+            .lib-prebuilt/linux-x86_64/openssl
+            .lib-prebuilt/linux-x86_64/curl
+            .lib-prebuilt/linux-x86_64/glog
+            .lib-prebuilt/linux-x86_64/json
+            .lib-prebuilt/linux-x86_64/fonts
+            .lib-prebuilt/linux-x86_64/.qt-stamp
+            .lib-prebuilt/linux-x86_64/.openssl-stamp
+            .lib-prebuilt/linux-x86_64/.curl-stamp
+            .lib-prebuilt/linux-x86_64/.glog-stamp
+            .lib-prebuilt/linux-x86_64/.json-stamp
+          key: prebuilt-linux-x86_64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+
       - name: Create prebuilt tarball
-        run: |
-          cd .lib-prebuilt/linux-x86_64
-          tar -cJf ../../prebuilt-linux-x86_64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: docker compose run --rm prebuilt-linux-x86_64
 
       - name: Upload prebuilt tarball
+        if: steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: prebuilt-linux-x86_64
-          path: prebuilt-linux-x86_64.tar.xz
+          path: .lib-prebuilt/lib-prebuilt-linux-x86_64.tar.xz
           retention-days: 90
 
   # =============================================
-  # Linux ARM64 - QEMU emulation
+  # Build Windows x86_64 (depends on Linux x86_64)
   # =============================================
-  build-linux-arm64:
+  build-windows-x86_64:
+    needs: [changes, build-linux-x86_64]
+    if: |
+      always() &&
+      needs.build-linux-x86_64.result == 'success' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.skip_x86_64 != true) ||
+       (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/'))))
     runs-on: ubuntu-latest
+    outputs:
+      tests-passed: ${{ steps.run-tests.outputs.tests-passed }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache prebuilt dependencies
-        id: cache-deps
+      # ===== Cache =====
+      - name: Restore windows-x86_64 cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .lib-prebuilt/windows-x86_64/qt6
+            .lib-prebuilt/windows-x86_64/curl
+            .lib-prebuilt/windows-x86_64/glog
+            .lib-prebuilt/windows-x86_64/json
+            .lib-prebuilt/windows-x86_64/fonts
+            .lib-prebuilt/windows-x86_64/.qt-stamp
+            .lib-prebuilt/windows-x86_64/.curl-stamp
+            .lib-prebuilt/windows-x86_64/.glog-stamp
+            .lib-prebuilt/windows-x86_64/.json-stamp
+          key: prebuilt-windows-x86_64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: |
+            prebuilt-windows-x86_64-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+            prebuilt-windows-x86_64-master-
+            prebuilt-windows-x86_64-
+
+      - name: Validate cache
+        id: validate-cache
+        if: steps.cache-restore.outputs.cache-hit == 'true'
+        run: |
+          ERRORS=0
+          for stamp in .qt-stamp .curl-stamp .glog-stamp .json-stamp; do
+            if [[ ! -f ".lib-prebuilt/windows-x86_64/${stamp}" ]]; then
+              echo "::warning::Missing stamp: ${stamp}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          for dir in qt6 curl glog json; do
+            if [[ ! -d ".lib-prebuilt/windows-x86_64/${dir}" ]]; then
+              echo "::warning::Missing dir: ${dir}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "cache-valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "cache-valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      # ===== Host Qt from Linux x86_64 =====
+      - name: Download host Qt
+        uses: actions/download-artifact@v4
+        with:
+          name: host-qt-linux-x86_64
+          path: .lib-prebuilt/linux-x86_64/qt6
+
+      - name: Ensure host Qt tools executable
+        run: |
+          for dir in bin libexec; do
+            if [[ -d ".lib-prebuilt/linux-x86_64/qt6/$dir" ]]; then
+              sudo chmod -R a+rx ".lib-prebuilt/linux-x86_64/qt6/$dir"
+            fi
+          done
+
+      - name: Download prebuilt fallback
+        id: prebuilt-fallback
+        if: (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tmp="/tmp/lib-prebuilt-windows-x86_64.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-windows-x86_64.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/windows-x86_64"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            echo "deps-ready=true" >> $GITHUB_OUTPUT
+          fi
+          true
+
+      # ===== Build =====
+      - name: Build dependencies
+        id: build-deps
+        if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
+        run: |
+          if [[ "${{ inputs.force_rebuild_deps }}" != "true" && "${{ steps.prebuilt-fallback.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded prebuilt deps"
+            exit 0
+          fi
+          docker compose run --rm deps-windows-x86_64
+          sudo rm -rf .lib-prebuilt/windows-x86_64/{qt6,curl,glog,json}-{build,src}
+          echo "deps-built=true" >> $GITHUB_OUTPUT
+        timeout-minutes: 240
+
+      - name: Build application
+        run: docker compose run --rm app-windows-x86_64
+        timeout-minutes: 60
+
+      - name: Build tests
+        run: docker compose run --rm test-build-windows-x86_64
+        timeout-minutes: 30
+
+      # ===== Test via Wine =====
+      - name: Run tests (Wine)
+        id: run-tests
+        run: |
+          mkdir -p test-results
+          docker compose run --rm test-run-windows-x86_64
+          echo "tests-passed=true" >> $GITHUB_OUTPUT
+        timeout-minutes: 30
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-windows-x86_64
+          path: test-results/*.xml
+          retention-days: 30
+
+      # ===== Distribute =====
+      - name: Create distribution
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: |
+          docker compose run --rm distribute-windows-x86_64
+          docker compose run --rm package-windows-x86_64
+
+      - name: Upload Windows ZIP
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-x86_64
+          path: .distribute/RickAndMortyViewer-windows-x86_64.zip
+          retention-days: 30
+
+      # ===== Cache & Prebuilt =====
+      - name: Save cache
+        if: steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .lib-prebuilt/windows-x86_64/qt6
+            .lib-prebuilt/windows-x86_64/curl
+            .lib-prebuilt/windows-x86_64/glog
+            .lib-prebuilt/windows-x86_64/json
+            .lib-prebuilt/windows-x86_64/fonts
+            .lib-prebuilt/windows-x86_64/.qt-stamp
+            .lib-prebuilt/windows-x86_64/.curl-stamp
+            .lib-prebuilt/windows-x86_64/.glog-stamp
+            .lib-prebuilt/windows-x86_64/.json-stamp
+          key: prebuilt-windows-x86_64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+
+      - name: Create prebuilt tarball
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: docker compose run --rm prebuilt-windows-x86_64
+
+      - name: Upload prebuilt tarball
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-windows-x86_64
+          path: .lib-prebuilt/lib-prebuilt-windows-x86_64.tar.xz
+          retention-days: 90
+
+  # =============================================================================
+  # ARM64 BRANCH: Linux ARM64 → Windows ARM64
+  # =============================================================================
+
+  # =============================================
+  # Build Wine 10 ARM64 (runs in parallel with Linux ARM64)
+  # Required for Windows ARM64 testing
+  # =============================================
+  build-wine10-arm64:
+    needs: changes
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.skip_arm64 != true) ||
+      (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')))
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ===== Cache Wine 10 Docker image =====
+      - name: Restore Wine 10 cache
+        id: wine10-cache
         uses: actions/cache@v4
+        with:
+          path: /tmp/wine10-docker
+          key: wine10-arm64-${{ hashFiles('docker/Dockerfile.wine10-arm64') }}
+
+      - name: Load Wine 10 from cache
+        id: load-cache
+        if: steps.wine10-cache.outputs.cache-hit == 'true'
+        run: |
+          if [[ -f /tmp/wine10-docker/wine10-arm64.tar ]]; then
+            docker load -i /tmp/wine10-docker/wine10-arm64.tar
+            echo "loaded=true" >> $GITHUB_OUTPUT
+            echo "Loaded Wine 10 image from cache"
+          else
+            echo "loaded=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Wine 10 Docker image
+        if: steps.wine10-cache.outputs.cache-hit != 'true' || steps.load-cache.outputs.loaded != 'true'
+        run: |
+          docker build -t wine10-arm64:latest -f docker/Dockerfile.wine10-arm64 docker/
+          mkdir -p /tmp/wine10-docker
+          docker save -o /tmp/wine10-docker/wine10-arm64.tar wine10-arm64:latest
+          echo "Built and saved Wine 10 image"
+        timeout-minutes: 20
+
+      - name: Save Wine 10 image as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine10-arm64-image
+          path: /tmp/wine10-docker/wine10-arm64.tar
+          retention-days: 1
+
+  # =============================================
+  # Build Linux ARM64 (native ARM64 runner)
+  # =============================================
+  build-linux-arm64:
+    needs: changes
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.skip_arm64 != true) ||
+      (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')))
+    runs-on: ubuntu-22.04-arm
+    outputs:
+      tests-passed: ${{ steps.run-tests.outputs.tests-passed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ===== Cache =====
+      - name: Restore linux-arm64 cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             .lib-prebuilt/linux-arm64/qt6
+            .lib-prebuilt/linux-arm64/openssl
             .lib-prebuilt/linux-arm64/curl
             .lib-prebuilt/linux-arm64/glog
+            .lib-prebuilt/linux-arm64/json
             .lib-prebuilt/linux-arm64/fonts
             .lib-prebuilt/linux-arm64/.qt-stamp
+            .lib-prebuilt/linux-arm64/.openssl-stamp
             .lib-prebuilt/linux-arm64/.curl-stamp
             .lib-prebuilt/linux-arm64/.glog-stamp
-          key: prebuilt-linux-arm64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          restore-keys: prebuilt-linux-arm64-
+            .lib-prebuilt/linux-arm64/.json-stamp
+          key: prebuilt-linux-arm64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: |
+            prebuilt-linux-arm64-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+            prebuilt-linux-arm64-master-
+            prebuilt-linux-arm64-
 
-      - name: Build dependencies
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+      - name: Validate cache
+        id: validate-cache
+        if: steps.cache-restore.outputs.cache-hit == 'true'
         run: |
+          ERRORS=0
+          for stamp in .qt-stamp .openssl-stamp .curl-stamp .glog-stamp .json-stamp; do
+            if [[ ! -f ".lib-prebuilt/linux-arm64/${stamp}" ]]; then
+              echo "::warning::Missing stamp: ${stamp}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          for dir in qt6 openssl curl glog json; do
+            if [[ ! -d ".lib-prebuilt/linux-arm64/${dir}" ]]; then
+              echo "::warning::Missing dir: ${dir}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [[ ! -x ".lib-prebuilt/linux-arm64/qt6/libexec/moc" ]]; then
+            echo "::warning::Missing Qt host tool: moc"
+            ERRORS=$((ERRORS + 1))
+          fi
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "cache-valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "cache-valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download prebuilt fallback
+        id: prebuilt-fallback
+        if: (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tmp="/tmp/lib-prebuilt-linux-arm64.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-linux-arm64.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/linux-arm64"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            if [[ -x ".lib-prebuilt/linux-arm64/qt6/libexec/moc" ]]; then
+              echo "deps-ready=true" >> $GITHUB_OUTPUT
+            else
+              echo "::warning::Prebuilt Qt missing host tools; rebuilding."
+              sudo rm -rf ".lib-prebuilt/linux-arm64/qt6"
+              sudo rm -f ".lib-prebuilt/linux-arm64/.qt-stamp"
+            fi
+          fi
+          true
+
+      - name: Ensure Qt tools executable
+        run: |
+          if [[ -d ".lib-prebuilt/linux-arm64/qt6/libexec" ]]; then
+            sudo chmod -R a+rx ".lib-prebuilt/linux-arm64/qt6/libexec"
+          fi
+
+      # ===== Build =====
+      - name: Build dependencies
+        id: build-deps
+        if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
+        run: |
+          if [[ "${{ inputs.force_rebuild_deps }}" != "true" && "${{ steps.prebuilt-fallback.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded prebuilt deps"
+            exit 0
+          fi
           docker compose run --rm deps-linux-arm64
-          rm -rf .lib-prebuilt/linux-arm64/qt6-build
-          rm -rf .lib-prebuilt/linux-arm64/qt6-src
-          rm -rf .lib-prebuilt/linux-arm64/curl-build
-          rm -rf .lib-prebuilt/linux-arm64/curl-src
-          rm -rf .lib-prebuilt/linux-arm64/glog-build
-          rm -rf .lib-prebuilt/linux-arm64/glog-src
+          sudo rm -rf .lib-prebuilt/linux-arm64/{qt6,curl,glog,json}-{build,src}
+          echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: 600
 
-      - name: Build application and AppImage
+      - name: Build application
+        run: docker compose run --rm app-linux-arm64
+        timeout-minutes: 60
+
+      - name: Build tests
+        run: docker compose run --rm test-build-linux-arm64
+        timeout-minutes: 30
+
+      # ===== Test =====
+      - name: Run tests
+        id: run-tests
         run: |
-          docker compose run --rm app-linux-arm64
+          mkdir -p test-results
+          docker compose run --rm test-run-linux-arm64
+          echo "tests-passed=true" >> $GITHUB_OUTPUT
+        timeout-minutes: 60
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-linux-arm64
+          path: test-results/*.xml
+          retention-days: 30
+
+      # ===== Distribute =====
+      - name: Create distribution
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: |
           docker compose run --rm distribute-linux-arm64
           docker compose run --rm appimage-linux-arm64
 
       - name: Upload AppImage
+        if: steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: appimage-linux-arm64
           path: .distribute/RickAndMortyViewer-aarch64.AppImage
           retention-days: 30
 
+      # ===== Host Qt for Windows ARM64 =====
+      - name: Upload host Qt
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-qt-linux-arm64
+          path: .lib-prebuilt/linux-arm64/qt6
+          retention-days: 1
+
+      # ===== Cache & Prebuilt =====
+      - name: Save cache
+        if: steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .lib-prebuilt/linux-arm64/qt6
+            .lib-prebuilt/linux-arm64/openssl
+            .lib-prebuilt/linux-arm64/curl
+            .lib-prebuilt/linux-arm64/glog
+            .lib-prebuilt/linux-arm64/json
+            .lib-prebuilt/linux-arm64/fonts
+            .lib-prebuilt/linux-arm64/.qt-stamp
+            .lib-prebuilt/linux-arm64/.openssl-stamp
+            .lib-prebuilt/linux-arm64/.curl-stamp
+            .lib-prebuilt/linux-arm64/.glog-stamp
+            .lib-prebuilt/linux-arm64/.json-stamp
+          key: prebuilt-linux-arm64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+
       - name: Create prebuilt tarball
-        run: |
-          cd .lib-prebuilt/linux-arm64
-          tar -cJf ../../prebuilt-linux-arm64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: docker compose run --rm prebuilt-linux-arm64
 
       - name: Upload prebuilt tarball
+        if: steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: prebuilt-linux-arm64
-          path: prebuilt-linux-arm64.tar.xz
+          path: .lib-prebuilt/lib-prebuilt-linux-arm64.tar.xz
           retention-days: 90
 
   # =============================================
-  # Windows x86_64 - Cross-compile with MinGW
-  # Requires: Host Qt (linux-x86_64) built first
-  # =============================================
-  build-windows-x86_64:
-    runs-on: ubuntu-latest
-    needs: build-linux-x86_64
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore host Qt cache (required for cross-compile)
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lib-prebuilt/linux-x86_64/qt6
-            .lib-prebuilt/linux-x86_64/curl
-            .lib-prebuilt/linux-x86_64/glog
-            .lib-prebuilt/linux-x86_64/fonts
-            .lib-prebuilt/linux-x86_64/.qt-stamp
-            .lib-prebuilt/linux-x86_64/.curl-stamp
-            .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          fail-on-cache-miss: true
-
-      - name: Cache Windows x86_64 dependencies
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lib-prebuilt/windows-x86_64/qt6
-            .lib-prebuilt/windows-x86_64/curl
-            .lib-prebuilt/windows-x86_64/glog
-            .lib-prebuilt/windows-x86_64/fonts
-            .lib-prebuilt/windows-x86_64/.qt-stamp
-            .lib-prebuilt/windows-x86_64/.curl-stamp
-            .lib-prebuilt/windows-x86_64/.glog-stamp
-          key: prebuilt-windows-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          restore-keys: prebuilt-windows-x86_64-
-
-      - name: Build dependencies (cross-compile)
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
-        run: |
-          docker compose run --rm deps-windows-x86_64
-          rm -rf .lib-prebuilt/windows-x86_64/qt6-build
-          rm -rf .lib-prebuilt/windows-x86_64/qt6-src
-          rm -rf .lib-prebuilt/windows-x86_64/curl-build
-          rm -rf .lib-prebuilt/windows-x86_64/curl-src
-          rm -rf .lib-prebuilt/windows-x86_64/glog-build
-          rm -rf .lib-prebuilt/windows-x86_64/glog-src
-        timeout-minutes: 240
-
-      - name: Build application and distribution
-        run: |
-          docker compose run --rm app-windows-x86_64
-          docker compose run --rm distribute-windows-x86_64
-
-      - name: Create Windows zip
-        run: |
-          cd .distribute/windows-x86_64
-          zip -r ../../RickAndMortyViewer-windows-x86_64.zip .
-
-      - name: Upload Windows zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-windows-x86_64
-          path: RickAndMortyViewer-windows-x86_64.zip
-          retention-days: 30
-
-      - name: Create prebuilt tarball
-        run: |
-          cd .lib-prebuilt/windows-x86_64
-          tar -cJf ../../prebuilt-windows-x86_64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
-
-      - name: Upload prebuilt tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: prebuilt-windows-x86_64
-          path: prebuilt-windows-x86_64.tar.xz
-          retention-days: 90
-
-  # =============================================
-  # Windows ARM64 - Cross-compile with llvm-mingw
-  # Requires: Host Qt (linux-x86_64) built first
+  # Build Windows ARM64 (native ARM64 runner)
+  # Uses Wine 10 for testing (ARM64 compatibility)
   # =============================================
   build-windows-arm64:
-    runs-on: ubuntu-latest
-    needs: build-linux-x86_64
+    needs: [changes, build-linux-arm64, build-wine10-arm64]
+    if: |
+      always() &&
+      needs.build-linux-arm64.result == 'success' &&
+      needs.build-wine10-arm64.result == 'success' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.skip_arm64 != true) ||
+       (github.event_name != 'workflow_dispatch' && (needs.changes.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/'))))
+    runs-on: ubuntu-22.04-arm
+    outputs:
+      tests-passed: ${{ steps.run-tests.outputs.tests-passed }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Restore host Qt cache (required for cross-compile)
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lib-prebuilt/linux-x86_64/qt6
-            .lib-prebuilt/linux-x86_64/curl
-            .lib-prebuilt/linux-x86_64/glog
-            .lib-prebuilt/linux-x86_64/fonts
-            .lib-prebuilt/linux-x86_64/.qt-stamp
-            .lib-prebuilt/linux-x86_64/.curl-stamp
-            .lib-prebuilt/linux-x86_64/.glog-stamp
-          key: prebuilt-linux-x86_64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          fail-on-cache-miss: true
-
-      - name: Cache Windows ARM64 dependencies
-        id: cache-deps
-        uses: actions/cache@v4
+      # ===== Cache =====
+      - name: Restore windows-arm64 cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             .lib-prebuilt/windows-arm64/qt6
             .lib-prebuilt/windows-arm64/curl
             .lib-prebuilt/windows-arm64/glog
+            .lib-prebuilt/windows-arm64/json
             .lib-prebuilt/windows-arm64/fonts
             .lib-prebuilt/windows-arm64/.qt-stamp
             .lib-prebuilt/windows-arm64/.curl-stamp
             .lib-prebuilt/windows-arm64/.glog-stamp
-          key: prebuilt-windows-arm64-${{ hashFiles('CMakeLists.txt', 'docker/Dockerfile') }}
-          restore-keys: prebuilt-windows-arm64-
+            .lib-prebuilt/windows-arm64/.json-stamp
+          key: prebuilt-windows-arm64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+          restore-keys: |
+            prebuilt-windows-arm64-master-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+            prebuilt-windows-arm64-master-
+            prebuilt-windows-arm64-
 
-      - name: Build dependencies (cross-compile)
-        if: steps.cache-deps.outputs.cache-hit != 'true' || inputs.force_rebuild_deps
+      - name: Validate cache
+        id: validate-cache
+        if: steps.cache-restore.outputs.cache-hit == 'true'
         run: |
+          ERRORS=0
+          for stamp in .qt-stamp .curl-stamp .glog-stamp .json-stamp; do
+            if [[ ! -f ".lib-prebuilt/windows-arm64/${stamp}" ]]; then
+              echo "::warning::Missing stamp: ${stamp}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          for dir in qt6 curl glog json; do
+            if [[ ! -d ".lib-prebuilt/windows-arm64/${dir}" ]]; then
+              echo "::warning::Missing dir: ${dir}"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          if [[ $ERRORS -gt 0 ]]; then
+            echo "cache-valid=false" >> $GITHUB_OUTPUT
+          else
+            echo "cache-valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      # ===== Host Qt from Linux ARM64 =====
+      - name: Download host Qt
+        uses: actions/download-artifact@v4
+        with:
+          name: host-qt-linux-arm64
+          path: .lib-prebuilt/linux-arm64/qt6
+
+      - name: Ensure host Qt tools executable
+        run: |
+          for dir in bin libexec; do
+            if [[ -d ".lib-prebuilt/linux-arm64/qt6/$dir" ]]; then
+              sudo chmod -R a+rx ".lib-prebuilt/linux-arm64/qt6/$dir"
+            fi
+          done
+
+      - name: Download prebuilt fallback
+        id: prebuilt-fallback
+        if: (steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true') && !inputs.force_rebuild_deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tmp="/tmp/lib-prebuilt-windows-arm64.tar.xz"
+          if gh release download v0.0.1 -p "lib-prebuilt-windows-arm64.tar.xz" -D /tmp; then
+            sudo rm -rf ".lib-prebuilt/windows-arm64"
+            mkdir -p .lib-prebuilt
+            tar -C .lib-prebuilt -xJf "$tmp"
+            echo "deps-ready=true" >> $GITHUB_OUTPUT
+          fi
+          true
+
+      # ===== Build =====
+      - name: Build dependencies
+        id: build-deps
+        if: steps.cache-restore.outputs.cache-hit != 'true' || steps.validate-cache.outputs.cache-valid != 'true' || inputs.force_rebuild_deps
+        run: |
+          if [[ "${{ inputs.force_rebuild_deps }}" != "true" && "${{ steps.prebuilt-fallback.outputs.deps-ready }}" == "true" ]]; then
+            echo "Using downloaded prebuilt deps"
+            exit 0
+          fi
           docker compose run --rm deps-windows-arm64
-          rm -rf .lib-prebuilt/windows-arm64/qt6-build
-          rm -rf .lib-prebuilt/windows-arm64/qt6-src
-          rm -rf .lib-prebuilt/windows-arm64/curl-build
-          rm -rf .lib-prebuilt/windows-arm64/curl-src
-          rm -rf .lib-prebuilt/windows-arm64/glog-build
-          rm -rf .lib-prebuilt/windows-arm64/glog-src
+          sudo rm -rf .lib-prebuilt/windows-arm64/{qt6,curl,glog,json}-{build,src}
+          echo "deps-built=true" >> $GITHUB_OUTPUT
         timeout-minutes: 300
 
-      - name: Build application and distribution
+      - name: Build application
+        run: docker compose run --rm app-windows-arm64
+        timeout-minutes: 60
+
+      - name: Build tests
+        run: docker compose run --rm test-build-windows-arm64
+        timeout-minutes: 30
+
+      # ===== Wine 10 Docker Image (from parallel job) =====
+      - name: Download Wine 10 image
+        uses: actions/download-artifact@v4
+        with:
+          name: wine10-arm64-image
+          path: /tmp/wine10-docker
+
+      - name: Load Wine 10 Docker image
         run: |
-          docker compose run --rm app-windows-arm64
+          docker load -i /tmp/wine10-docker/wine10-arm64.tar
+          # Tag for docker compose usage
+          docker tag wine10-arm64:latest live_coding-test-run-windows-arm64
+          echo "Loaded Wine 10 image from artifact"
+
+      # ===== Test via Wine 10 =====
+      - name: Run tests (Wine 10)
+        id: run-tests
+        run: |
+          mkdir -p test-results
+          docker compose run --rm test-run-windows-arm64
+          echo "tests-passed=true" >> $GITHUB_OUTPUT
+        timeout-minutes: 30
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-windows-arm64
+          path: test-results/*.xml
+          retention-days: 30
+
+      # ===== Distribute =====
+      - name: Create distribution
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: |
           docker compose run --rm distribute-windows-arm64
+          docker compose run --rm package-windows-arm64
 
-      - name: Create Windows zip
-        run: |
-          cd .distribute/windows-arm64
-          zip -r ../../RickAndMortyViewer-windows-arm64.zip .
-
-      - name: Upload Windows zip
+      - name: Upload Windows ZIP
+        if: steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dist-windows-arm64
-          path: RickAndMortyViewer-windows-arm64.zip
+          path: .distribute/RickAndMortyViewer-windows-arm64.zip
           retention-days: 30
 
+      # ===== Cache & Prebuilt =====
+      - name: Save cache
+        if: steps.build-deps.outputs.deps-built == 'true' && steps.run-tests.outputs.tests-passed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .lib-prebuilt/windows-arm64/qt6
+            .lib-prebuilt/windows-arm64/curl
+            .lib-prebuilt/windows-arm64/glog
+            .lib-prebuilt/windows-arm64/json
+            .lib-prebuilt/windows-arm64/fonts
+            .lib-prebuilt/windows-arm64/.qt-stamp
+            .lib-prebuilt/windows-arm64/.curl-stamp
+            .lib-prebuilt/windows-arm64/.glog-stamp
+            .lib-prebuilt/windows-arm64/.json-stamp
+          key: prebuilt-windows-arm64-${{ github.ref_name }}-${{ hashFiles('.github/cache-inputs.txt') }}-v${{ env.CACHE_VERSION }}
+
       - name: Create prebuilt tarball
-        run: |
-          cd .lib-prebuilt/windows-arm64
-          tar -cJf ../../prebuilt-windows-arm64.tar.xz qt6 curl glog fonts .qt-stamp .curl-stamp .glog-stamp
+        if: steps.run-tests.outputs.tests-passed == 'true'
+        run: docker compose run --rm prebuilt-windows-arm64
 
       - name: Upload prebuilt tarball
+        if: steps.run-tests.outputs.tests-passed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: prebuilt-windows-arm64
-          path: prebuilt-windows-arm64.tar.xz
+          path: .lib-prebuilt/lib-prebuilt-windows-arm64.tar.xz
           retention-days: 90
 
   # =============================================
-  # Release - Create GitHub Release on tags
+  # Release (requires ALL platforms to pass)
   # =============================================
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x86_64, build-windows-arm64]
+    needs: [build-linux-x86_64, build-windows-x86_64, build-linux-arm64, build-windows-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -328,6 +871,35 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Verify all platforms built
+        run: |
+          MISSING=0
+          for platform in linux-x86_64 linux-arm64 windows-x86_64 windows-arm64; do
+            if [[ ! -f "artifacts/prebuilt-${platform}/lib-prebuilt-${platform}.tar.xz" ]]; then
+              echo "::error::Missing prebuilt for ${platform}"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          for platform in linux-x86_64 linux-arm64; do
+            arch="x86_64"
+            [[ "$platform" == "linux-arm64" ]] && arch="aarch64"
+            if [[ ! -f "artifacts/appimage-${platform}/RickAndMortyViewer-${arch}.AppImage" ]]; then
+              echo "::error::Missing AppImage for ${platform}"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          for platform in windows-x86_64 windows-arm64; do
+            if [[ ! -f "artifacts/dist-${platform}/RickAndMortyViewer-${platform}.zip" ]]; then
+              echo "::error::Missing Windows ZIP for ${platform}"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [[ $MISSING -gt 0 ]]; then
+            echo "::error::Cannot release - ${MISSING} artifact(s) missing"
+            exit 1
+          fi
+          echo "All platforms built successfully"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -339,7 +911,7 @@ jobs:
             artifacts/appimage-linux-arm64/RickAndMortyViewer-aarch64.AppImage
             artifacts/dist-windows-x86_64/RickAndMortyViewer-windows-x86_64.zip
             artifacts/dist-windows-arm64/RickAndMortyViewer-windows-arm64.zip
-            artifacts/prebuilt-linux-x86_64/prebuilt-linux-x86_64.tar.xz
-            artifacts/prebuilt-linux-arm64/prebuilt-linux-arm64.tar.xz
-            artifacts/prebuilt-windows-x86_64/prebuilt-windows-x86_64.tar.xz
-            artifacts/prebuilt-windows-arm64/prebuilt-windows-arm64.tar.xz
+            artifacts/prebuilt-linux-x86_64/lib-prebuilt-linux-x86_64.tar.xz
+            artifacts/prebuilt-linux-arm64/lib-prebuilt-linux-arm64.tar.xz
+            artifacts/prebuilt-windows-x86_64/lib-prebuilt-windows-x86_64.tar.xz
+            artifacts/prebuilt-windows-arm64/lib-prebuilt-windows-arm64.tar.xz

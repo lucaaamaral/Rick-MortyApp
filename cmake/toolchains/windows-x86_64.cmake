@@ -1,12 +1,14 @@
-# Cross-compilation toolchain for Windows x86_64 using MinGW-w64
+# Cross-compilation toolchain for Windows x86_64 using MinGW-w64 (POSIX threading)
 # Requires: sudo apt install mingw-w64
+# Uses the POSIX threading variant for C++11 std::thread support
 
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
-# Use absolute paths to avoid picking up llvm-mingw from PATH
-set(CMAKE_C_COMPILER /usr/bin/x86_64-w64-mingw32-gcc)
-set(CMAKE_CXX_COMPILER /usr/bin/x86_64-w64-mingw32-g++)
+# Use POSIX threading variant for full C++11 threading support
+# The -posix variant uses winpthreads which enables std::thread, std::mutex, etc.
+set(CMAKE_C_COMPILER /usr/bin/x86_64-w64-mingw32-gcc-posix)
+set(CMAKE_CXX_COMPILER /usr/bin/x86_64-w64-mingw32-g++-posix)
 set(CMAKE_RC_COMPILER /usr/bin/x86_64-w64-mingw32-windres)
 
 set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)

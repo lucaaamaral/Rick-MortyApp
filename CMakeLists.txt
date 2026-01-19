@@ -166,12 +166,17 @@ if(IS_CROSS_COMPILE)
     # Qt6 puts host tools in libexec/, not bin/
     set(HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/${HOST_PLATFORM}/qt6")
     if(NOT EXISTS "${HOST_QT_DIR}/libexec/moc")
-        message(FATAL_ERROR
-            "Cross-compiling requires host Qt built first.\n"
-            "Build for ${HOST_PLATFORM} before building for ${TARGET_PLATFORM}:\n"
-            "  cmake -B .build/${HOST_PLATFORM} -DTARGET_PLATFORM=${HOST_PLATFORM}\n"
-            "  cmake --build .build/${HOST_PLATFORM} --target qt6_external"
-        )
+        set(ALT_HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/linux-arm64/qt6")
+        if(EXISTS "${ALT_HOST_QT_DIR}/libexec/moc")
+            set(HOST_QT_DIR "${ALT_HOST_QT_DIR}")
+        else()
+            message(FATAL_ERROR
+                "Cross-compiling requires host Qt built first.\n"
+                "Build for ${HOST_PLATFORM} before building for ${TARGET_PLATFORM}:\n"
+                "  cmake -B .build/${HOST_PLATFORM} -DTARGET_PLATFORM=${HOST_PLATFORM}\n"
+                "  cmake --build .build/${HOST_PLATFORM} --target qt6_external"
+            )
+        endif()
     endif()
     message(STATUS "Using host Qt from: ${HOST_QT_DIR}")
 
@@ -210,6 +215,7 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         ${QT_PLATFORM_ARGS}
     )
 
+    set(QT_ENV_VARS "")
     if(IS_CROSS_COMPILE AND TARGET_OS STREQUAL "linux")
         set(SYSROOT_DIR "/")
         if(TARGET_PLATFORM STREQUAL "linux-arm64")
@@ -222,11 +228,16 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
             -sysroot ${SYSROOT_DIR}
             -pkg-config
         )
-        list(PREPEND QT_CONFIGURE_CMD
-            ${CMAKE_COMMAND} -E env
+        list(APPEND QT_ENV_VARS
             PKG_CONFIG_PATH=${PKG_CONFIG_PATH}
             PKG_CONFIG_LIBDIR=${PKG_CONFIG_PATH}
             PKG_CONFIG_SYSROOT_DIR=${SYSROOT_DIR}
+        )
+    endif()
+    if(QT_ENV_VARS)
+        list(PREPEND QT_CONFIGURE_CMD
+            ${CMAKE_COMMAND} -E env
+            ${QT_ENV_VARS}
         )
     endif()
 
@@ -249,6 +260,25 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
         list(APPEND QT_CONFIGURE_CMD -- -G "${QT_GENERATOR}")
     endif()
 
+    set(QT_PATCH_COMMAND ${CMAKE_COMMAND} -E echo "No Qt patches needed")
+    set(QT_UPDATE_COMMAND
+        cd <SOURCE_DIR> &&
+            git submodule update --init --depth 1 --single-branch -- qtbase qtdeclarative qtshadertools qtsvg qtwayland
+    )
+    if(TARGET_OS STREQUAL "windows")
+        set(QT_PATCH_FILES
+            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-disable-d3d12.patch"
+            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-netlistmgr-compat.patch"
+            "${CMAKE_SOURCE_DIR}/cmake/patches/qt6-mingw-win11-compat.patch"
+        )
+        set(QT_UPDATE_COMMAND
+            ${CMAKE_COMMAND} -E chdir <SOURCE_DIR>
+            /bin/sh ${CMAKE_SOURCE_DIR}/cmake/scripts/qt-init-repository.sh
+            ${QT_PATCH_FILES}
+        )
+        set(QT_PATCH_COMMAND ${CMAKE_COMMAND} -E echo "Qt patches applied during update")
+    endif()
+
     ExternalProject_Add(qt6_external
         GIT_REPOSITORY https://code.qt.io/qt/qt5.git
         GIT_TAG v6.6.2
@@ -263,8 +293,9 @@ if(NOT EXISTS "${QT_STAMP_FILE}")
 
         # Initialize only needed submodules with shallow clone (much faster)
         # Includes qtwayland for Wayland display support
-        UPDATE_COMMAND cd <SOURCE_DIR> &&
-            git submodule update --init --depth 1 --single-branch -- qtbase qtdeclarative qtshadertools qtsvg qtwayland
+        UPDATE_COMMAND ${QT_UPDATE_COMMAND}
+
+        PATCH_COMMAND ${QT_PATCH_COMMAND}
 
         CONFIGURE_COMMAND ${QT_CONFIGURE_CMD}
 
@@ -688,6 +719,27 @@ if(IS_CROSS_COMPILE)
     if(EXISTS "${TOOLCHAIN_FILE}")
         list(APPEND APP_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE})
     endif()
+endif()
+
+# When using cross-compiled Qt or prebuilt binaries, provide host Qt tools path.
+if(NOT DEFINED QT_HOST_PATH)
+    if(DEFINED ENV{QT_HOST_PATH})
+        set(QT_HOST_PATH "$ENV{QT_HOST_PATH}")
+    else()
+        set(HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/linux-x86_64/qt6")
+        if(EXISTS "${HOST_QT_DIR}")
+            set(QT_HOST_PATH "${HOST_QT_DIR}")
+        endif()
+    endif()
+endif()
+if(QT_HOST_PATH AND NOT EXISTS "${QT_HOST_PATH}/libexec/moc")
+    set(ALT_HOST_QT_DIR "${CMAKE_SOURCE_DIR}/.lib-prebuilt/linux-arm64/qt6")
+    if(EXISTS "${ALT_HOST_QT_DIR}/libexec/moc")
+        set(QT_HOST_PATH "${ALT_HOST_QT_DIR}")
+    endif()
+endif()
+if(QT_HOST_PATH)
+    list(APPEND APP_CMAKE_ARGS -DQT_HOST_PATH=${QT_HOST_PATH})
 endif()
 
 ExternalProject_Add(rick_and_morty_viewer

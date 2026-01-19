@@ -1,0 +1,98 @@
+# Wine 10 ARM64 test runner for Windows ARM64 binaries
+# Builds Wine 10.x from source with ARM64 support
+# Wine 10.2+ fixes the ARM64 hang bug (https://bugs.launchpad.net/wine/+bug/1100695)
+
+# Stage 1: Build Wine 10 from source
+FROM debian:bookworm AS builder
+
+# Install build dependencies for Wine
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    flex \
+    bison \
+    gcc \
+    g++ \
+    make \
+    pkg-config \
+    gettext \
+    ca-certificates \
+    curl \
+    xz-utils \
+    # LLVM/Clang for PE builds
+    clang \
+    lld \
+    llvm \
+    # Headers for Wine build
+    libx11-dev \
+    libfreetype-dev \
+    libfontconfig-dev \
+    libxcursor-dev \
+    libxi-dev \
+    libxrandr-dev \
+    libxfixes-dev \
+    libxcomposite-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Download and extract Wine 10.17 source
+ARG WINE_VERSION=10.17
+RUN curl -fsSL "https://dl.winehq.org/wine/source/10.x/wine-${WINE_VERSION}.tar.xz" -o wine.tar.xz \
+    && tar -xJf wine.tar.xz \
+    && rm wine.tar.xz
+
+# Build Wine with ARM64 PE support
+WORKDIR /build/wine-${WINE_VERSION}
+RUN ./configure --prefix=/opt/wine \
+    --enable-archs=aarch64 \
+    --without-x \
+    --without-freetype \
+    --disable-tests \
+    && make -j$(nproc) \
+    && make install
+
+# Stage 2: Runtime image
+FROM debian:bookworm
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    ca-certificates \
+    procps \
+    libfreetype6 \
+    libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Wine 10 from builder
+COPY --from=builder /opt/wine /opt/wine
+
+# Add Wine to PATH
+ENV PATH="/opt/wine/bin:$PATH"
+
+# Suppress Wine debug output
+ENV WINEDEBUG=-all
+# Use isolated Wine prefix per run
+ENV WINEPREFIX=/tmp/wine
+# Headless display
+ENV DISPLAY=:99
+
+WORKDIR /workspace
+
+# Entry script that sets up virtual display
+COPY <<'EOF' /usr/local/bin/run-wine-test.sh
+#!/bin/bash
+set -e
+
+# Start virtual framebuffer if needed
+if ! pgrep -x Xvfb > /dev/null; then
+    Xvfb :99 -screen 0 1024x768x24 &
+    sleep 1
+fi
+
+# Run the test executable with Wine 10
+exec wine "$@"
+EOF
+
+RUN chmod +x /usr/local/bin/run-wine-test.sh
+
+ENTRYPOINT ["/usr/local/bin/run-wine-test.sh"]

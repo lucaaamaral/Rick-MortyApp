@@ -245,6 +245,20 @@ services:
         cmake --build .build/windows-x86_64 --target distribute
       "
 
+  package-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        cd /workspace/.distribute/windows-x86_64;
+        cmake -E tar cf ../RickAndMortyViewer-windows-x86_64.zip --format=zip .
+      "
+
   #######################################
   # Windows ARM64 cross-compilation (llvm-mingw)
   # Requires host Qt built first (linux-x86_64 or linux-arm64)
@@ -288,6 +302,20 @@ services:
         cmake --build .build/windows-arm64 --target distribute
       "
 
+  package-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        cd /workspace/.distribute/windows-arm64;
+        cmake -E tar cf ../RickAndMortyViewer-windows-arm64.zip --format=zip .
+      "
+
   #######################################
   # GTest build services (cross-compile tests)
   #######################################
@@ -328,7 +356,14 @@ services:
     command: >
       bash -c "
         cmake -B .build/windows-x86_64 -DTARGET_PLATFORM=windows-x86_64 -DBUILD_TESTS=ON &&
-        cmake --build .build/windows-x86_64 --target tests -j$$(nproc)
+        cmake --build .build/windows-x86_64 --target tests -j$$(nproc) &&
+        echo 'Copying MinGW runtime DLLs...' &&
+        MINGW_LIB=/usr/lib/gcc/x86_64-w64-mingw32/10-posix &&
+        RUNTIME_DIR=.lib-prebuilt/windows-x86_64/runtime &&
+        mkdir -p $$RUNTIME_DIR &&
+        cp -v $$MINGW_LIB/libstdc++-6.dll $$RUNTIME_DIR/ &&
+        cp -v $$MINGW_LIB/libgcc_s_seh-1.dll $$RUNTIME_DIR/ &&
+        cp -v /usr/x86_64-w64-mingw32/lib/libwinpthread-1.dll $$RUNTIME_DIR/
       "
 
   test-build-windows-arm64:
@@ -341,7 +376,13 @@ services:
     command: >
       bash -c "
         cmake -B .build/windows-arm64 -DTARGET_PLATFORM=windows-arm64 -DBUILD_TESTS=ON &&
-        cmake --build .build/windows-arm64 --target tests -j$$(nproc)
+        cmake --build .build/windows-arm64 --target tests -j$$(nproc) &&
+        echo 'Copying LLVM-MinGW runtime DLLs...' &&
+        LLVM_MINGW=/opt/llvm-mingw/aarch64-w64-mingw32/bin &&
+        RUNTIME_DIR=.lib-prebuilt/windows-arm64/runtime &&
+        mkdir -p $$RUNTIME_DIR &&
+        cp -v $$LLVM_MINGW/libc++.dll $$RUNTIME_DIR/ 2>/dev/null || true &&
+        cp -v $$LLVM_MINGW/libunwind.dll $$RUNTIME_DIR/ 2>/dev/null || true
       "
 
   #######################################
@@ -410,23 +451,30 @@ services:
     environment:
       - WINEDEBUG=-all
       - WINEPREFIX=/tmp/wine
-    command: >
-      bash -c "
-        mkdir -p /results &&
-        BUILD_DIR=/workspace/.build/windows-x86_64/tests-build &&
+      - DISPLAY=:99
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        Xvfb :99 -screen 0 1024x768x24 &
+        sleep 1
+        mkdir -p /results
+        BUILD_DIR=/workspace/.build/windows-x86_64/tests-build
+        QT_BIN=/workspace/.lib-prebuilt/windows-x86_64/qt6/bin
+        RUNTIME=/workspace/.lib-prebuilt/windows-x86_64/runtime
+        export WINEPATH="Z:$${QT_BIN};Z:$${RUNTIME}"
         for test_dir in unit property integration; do
-          test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe\" &&
-          if [ -f \"$$test_exe\" ]; then
-            echo \"Running tests_$${test_dir}.exe via Wine...\" &&
-            wine64 $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml || exit 1;
+          test_exe="$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe"
+          if [ -f "$$test_exe" ]; then
+            echo "Running tests_$${test_dir}.exe via Wine..."
+            wine $$test_exe --gtest_output=xml:/results/windows-x86_64-tests_$${test_dir}.xml || exit 1
           fi
         done
-      "
 
   test-run-windows-arm64:
     build:
       context: .
-      dockerfile: docker/Dockerfile.wine-arm64
+      dockerfile: docker/Dockerfile.wine10-arm64
     platform: linux/arm64
     volumes:
       - .:/workspace:ro
@@ -435,18 +483,25 @@ services:
     environment:
       - WINEDEBUG=-all
       - WINEPREFIX=/tmp/wine
-    command: >
-      bash -c "
-        mkdir -p /results &&
-        BUILD_DIR=/workspace/.build/windows-arm64/tests-build &&
+      - DISPLAY=:99
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        Xvfb :99 -screen 0 1024x768x24 &
+        sleep 1
+        mkdir -p /results
+        BUILD_DIR=/workspace/.build/windows-arm64/tests-build
+        QT_BIN=/workspace/.lib-prebuilt/windows-arm64/qt6/bin
+        RUNTIME=/workspace/.lib-prebuilt/windows-arm64/runtime
+        export WINEPATH="Z:$${QT_BIN};Z:$${RUNTIME}"
         for test_dir in unit property integration; do
-          test_exe=\"$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe\" &&
-          if [ -f \"$$test_exe\" ]; then
-            echo \"Running tests_$${test_dir}.exe via Wine...\" &&
-            wine $$test_exe --gtest_output=xml:/results/windows-arm64-tests_$${test_dir}.xml || exit 1;
+          test_exe="$${BUILD_DIR}/$${test_dir}/tests_$${test_dir}.exe"
+          if [ -f "$$test_exe" ]; then
+            echo "Running tests_$${test_dir}.exe via Wine..."
+            wine $$test_exe --gtest_output=xml:/results/windows-arm64-tests_$${test_dir}.xml || exit 1
           fi
         done
-      "
 
   #######################################
   # AppImage smoke test services (execution only)
@@ -543,6 +598,62 @@ services:
       bash -c "
         set -euo pipefail;
         ARCH=linux-arm64;
+        SRC=/workspace/.lib-prebuilt/$$ARCH;
+        OUT=/workspace/.lib-prebuilt;
+        TMP_BASE=/tmp/prebuilt-tmp;
+        TMP=$$TMP_BASE/$$ARCH;
+        if [ ! -d \"$$SRC\" ]; then
+          echo \"Missing $$SRC\"; exit 1;
+        fi
+        rm -rf \"$$TMP\";
+        mkdir -p \"$$TMP\" \"$$OUT\";
+        cp -a \"$$SRC/.\" \"$$TMP/\";
+        find \"$$TMP\" -type d \\( -name '*-build' -o -name '*-src' \\) -prune -exec rm -rf {} +;
+        find \"$$TMP\" -type d \\( -path '*/share/doc' -o -path '*/share/man' -o -path '*/share/qt6/doc' -o -path '*/share/qt6/examples' -o -path '*/share/qt6/translations' \\) -prune -exec rm -rf {} +;
+        tar -C \"$$TMP_BASE\" -cJvf \"$$OUT/lib-prebuilt-$$ARCH.tar.xz\" \"$$ARCH\";
+        rm -rf \"$$TMP\";
+        echo \"Wrote $$OUT/lib-prebuilt-$$ARCH.tar.xz\";
+      "
+
+  prebuilt-windows-x86_64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        ARCH=windows-x86_64;
+        SRC=/workspace/.lib-prebuilt/$$ARCH;
+        OUT=/workspace/.lib-prebuilt;
+        TMP_BASE=/tmp/prebuilt-tmp;
+        TMP=$$TMP_BASE/$$ARCH;
+        if [ ! -d \"$$SRC\" ]; then
+          echo \"Missing $$SRC\"; exit 1;
+        fi
+        rm -rf \"$$TMP\";
+        mkdir -p \"$$TMP\" \"$$OUT\";
+        cp -a \"$$SRC/.\" \"$$TMP/\";
+        find \"$$TMP\" -type d \\( -name '*-build' -o -name '*-src' \\) -prune -exec rm -rf {} +;
+        find \"$$TMP\" -type d \\( -path '*/share/doc' -o -path '*/share/man' -o -path '*/share/qt6/doc' -o -path '*/share/qt6/examples' -o -path '*/share/qt6/translations' \\) -prune -exec rm -rf {} +;
+        tar -C \"$$TMP_BASE\" -cJvf \"$$OUT/lib-prebuilt-$$ARCH.tar.xz\" \"$$ARCH\";
+        rm -rf \"$$TMP\";
+        echo \"Wrote $$OUT/lib-prebuilt-$$ARCH.tar.xz\";
+      "
+
+  prebuilt-windows-arm64:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/workspace:rw
+    working_dir: /workspace
+    command: >
+      bash -c "
+        set -euo pipefail;
+        ARCH=windows-arm64;
         SRC=/workspace/.lib-prebuilt/$$ARCH;
         OUT=/workspace/.lib-prebuilt;
         TMP_BASE=/tmp/prebuilt-tmp;

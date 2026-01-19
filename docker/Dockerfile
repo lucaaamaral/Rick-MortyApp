@@ -17,11 +17,13 @@ RUN set -e; \
     fi; \
     dpkg --add-architecture "$FOREIGN_ARCH"; \
     if [ "$ARCH" = "amd64" ]; then \
-        CROSS_COMPILERS="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
+        CROSS_COMPILERS="gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
     else \
-        CROSS_COMPILERS="gcc-x86-64-linux-gnu g++-x86-64-linux-gnu"; \
+        # x86_64 cross toolchain packages are not available in bullseye for arm64 hosts.
+        CROSS_COMPILERS=""; \
     fi; \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && \
+    apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends \
     # Build tools
     build-essential \
     cmake \
@@ -34,7 +36,7 @@ RUN set -e; \
     curl \
     file \
     xz-utils \
-    # Linux cross-compilers (bidirectional arm64 <-> x86_64)
+    # Linux cross-compilers (arm64 on amd64 hosts)
     ${CROSS_COMPILERS} \
     # Windows x86_64 cross-compiler (MinGW)
     mingw-w64 \
@@ -113,6 +115,7 @@ RUN set -e; \
     libfontconfig1 \
     libssl1.1 \
     libpcre3 \
+    libpcre2-16-0 \
     libc6-dev:${FOREIGN_ARCH} \
     libxcb1:${FOREIGN_ARCH} \
     libxcb-shm0:${FOREIGN_ARCH} \
@@ -129,13 +132,20 @@ RUN set -e; \
     libxcb-xinerama0:${FOREIGN_ARCH} \
     libxcb-xkb1:${FOREIGN_ARCH} \
     libxcb-cursor0:${FOREIGN_ARCH} \
+    libxkbcommon0:${FOREIGN_ARCH} \
+    libxkbcommon-x11-0:${FOREIGN_ARCH} \
     libx11-6:${FOREIGN_ARCH} \
     libxau6:${FOREIGN_ARCH} \
     libxdmcp6:${FOREIGN_ARCH} \
     libglib2.0-0:${FOREIGN_ARCH} \
     libfontconfig1:${FOREIGN_ARCH} \
+    libgl1-mesa-dev:${FOREIGN_ARCH} \
+    libegl1-mesa-dev:${FOREIGN_ARCH} \
+    libgles2-mesa-dev:${FOREIGN_ARCH} \
+    libopengl-dev:${FOREIGN_ARCH} \
     libssl1.1:${FOREIGN_ARCH} \
     libpcre3:${FOREIGN_ARCH} \
+    libpcre2-16-0:${FOREIGN_ARCH} \
     && rm -rf /var/lib/apt/lists/*; \
     if [ "$ARCH" = "arm64" ]; then \
         ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc; \
@@ -175,9 +185,9 @@ RUN ARCH=$(uname -m) && \
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then LLVM_ARCH="x86_64"; else LLVM_ARCH="aarch64"; fi && \
     curl -L -o /tmp/llvm-mingw.tar.xz \
-    "https://github.com/mstorsjo/llvm-mingw/releases/download/20251216/llvm-mingw-20251216-ucrt-ubuntu-22.04-${LLVM_ARCH}.tar.xz" && \
+    "https://github.com/mstorsjo/llvm-mingw/releases/download/20240320/llvm-mingw-20240320-ucrt-ubuntu-20.04-${LLVM_ARCH}.tar.xz" && \
     tar -xf /tmp/llvm-mingw.tar.xz -C /opt && \
-    ln -s /opt/llvm-mingw-20251216-ucrt-ubuntu-22.04-* /opt/llvm-mingw && \
+    ln -s /opt/llvm-mingw-20240320-ucrt-ubuntu-20.04-* /opt/llvm-mingw && \
     rm /tmp/llvm-mingw.tar.xz
 
 ENV PATH="/opt/llvm-mingw/bin:${PATH}"

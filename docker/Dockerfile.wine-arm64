@@ -1,0 +1,55 @@
+# Wine ARM64 test runner for Windows ARM64 binaries
+# Used for running unit/integration/property tests via Wine in CI
+# Note: Wine ARM64 support is experimental; this uses box64 as fallback
+FROM debian:bookworm
+
+# Install Wine and ARM64 emulation support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wine \
+    xvfb \
+    ca-certificates \
+    procps \
+    # box64 may be needed as Wine ARM64 is experimental
+    qemu-user-static \
+    && rm -rf /var/lib/apt/lists/*
+
+# Suppress Wine debug output
+ENV WINEDEBUG=-all
+# Use isolated Wine prefix per run
+ENV WINEPREFIX=/tmp/wine
+# Headless display
+ENV DISPLAY=:99
+
+# Pre-initialize Wine
+RUN wineboot --init 2>/dev/null || true
+
+WORKDIR /workspace
+
+# Entry script that sets up virtual display
+COPY <<'EOF' /usr/local/bin/run-wine-test.sh
+#!/bin/bash
+set -e
+
+# Start virtual framebuffer if needed
+if ! pgrep -x Xvfb > /dev/null; then
+    Xvfb :99 -screen 0 1024x768x24 &
+    sleep 1
+fi
+
+# Determine which wine to use
+# On ARM64, wine may need special handling
+if command -v wine-arm64 &> /dev/null; then
+    WINE_CMD="wine-arm64"
+elif command -v wine64 &> /dev/null; then
+    WINE_CMD="wine64"
+else
+    WINE_CMD="wine"
+fi
+
+# Run the test executable
+exec $WINE_CMD "$@"
+EOF
+
+RUN chmod +x /usr/local/bin/run-wine-test.sh
+
+ENTRYPOINT ["/usr/local/bin/run-wine-test.sh"]

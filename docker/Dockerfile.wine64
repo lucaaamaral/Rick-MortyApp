@@ -1,0 +1,46 @@
+# Wine64 test runner for Windows x86_64 binaries
+# Used for running unit/integration/property tests via Wine in CI
+FROM debian:bookworm
+
+# Install Wine64 for running Windows PE executables
+# Note: Install both wine and wine64 for compatibility across Debian versions
+RUN dpkg --add-architecture amd64 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    wine \
+    wine64 \
+    xvfb \
+    ca-certificates \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Suppress Wine debug output
+ENV WINEDEBUG=-all
+# Use isolated Wine prefix per run
+ENV WINEPREFIX=/tmp/wine
+# Headless display
+ENV DISPLAY=:99
+
+# Pre-initialize Wine (reduces startup time)
+RUN wineboot --init 2>/dev/null || true
+
+WORKDIR /workspace
+
+# Entry script that sets up virtual display
+COPY <<'EOF' /usr/local/bin/run-wine-test.sh
+#!/bin/bash
+set -e
+
+# Start virtual framebuffer if needed
+if ! pgrep -x Xvfb > /dev/null; then
+    Xvfb :99 -screen 0 1024x768x24 &
+    sleep 1
+fi
+
+# Run the test executable using wine
+# Note: Debian's wine64 package provides 'wine', not 'wine64'
+exec wine "$@"
+EOF
+
+RUN chmod +x /usr/local/bin/run-wine-test.sh
+
+ENTRYPOINT ["/usr/local/bin/run-wine-test.sh"]
